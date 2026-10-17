@@ -17,7 +17,7 @@
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：娜莉灵 ｜ 版本：v1.91.78 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.80 ｜ 许可：MIT
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "新.戳一戳"
-PLUGIN_VERSION = "v1.91.78"
+PLUGIN_VERSION = "v1.91.80"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 
@@ -188,18 +188,24 @@ class SuperPokePlugin(Star):
             and humanoid.asleep
             and settings.humanoid_silent_when_asleep
         ):
-            self._logger.debug(f"[{PLUGIN_NAME}] 人形化核心处于睡眠状态，本次不回应")
+            # 这是最需要“看得见”的静默路径：否则使用者只会觉得戳了没反应。
+            self._logger.info(
+                f"[{PLUGIN_NAME}] 人形化核心报告她正在睡觉，"
+                f"本次不回应 {signal.sender_name or signal.sender_id}"
+                f"（要睡着也回应：关掉「人形化联动 → 睡着时不回应」）",
+            )
             return
 
         # ---- 冷却 / 全局限流 ----
         allowed, wait = self._limiter.check_user(signal.sender_id, settings.user_cooldown)
         if not allowed:
-            self._logger.debug(
-                f"[{PLUGIN_NAME}] 用户 {signal.sender_id} 冷却中，剩余 {wait:.1f}s",
+            self._logger.info(
+                f"[{PLUGIN_NAME}] 用户 {signal.sender_id} 冷却中，"
+                f"剩余 {wait:.1f}s，本次不回应",
             )
             return
         if not self._limiter.check_global(settings.per_minute_limit):
-            self._logger.debug(f"[{PLUGIN_NAME}] 触发全局每分钟上限，丢弃本次戳一戳")
+            self._logger.info(f"[{PLUGIN_NAME}] 触发全局每分钟上限，丢弃本次戳一戳")
             return
 
         self_id = as_str(event.get_self_id())
