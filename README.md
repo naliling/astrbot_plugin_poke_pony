@@ -8,7 +8,7 @@
 > 真正自定义 —— 台词、触发词、平台、阈值全你说了算，插件一句台词都不预设；
 > 配置少不操心 —— 装上只填两处就能跑，其余默认值已经调好。
 
-![version](https://img.shields.io/badge/version-v1.91.79-ff69b4)
+![version](https://img.shields.io/badge/version-v1.91.78-ff69b4)
 ![platform](https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Lark%20%7C%20WeCom%20%7C%20WeChat-2ea44f)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![license](https://img.shields.io/badge/license-MIT-blue)

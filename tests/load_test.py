@@ -68,7 +68,7 @@ async def main() -> int:
     check("name = astrbot_plugin_poke_pony", metadata.get("name") == "astrbot_plugin_poke_pony", str(metadata.get("name")))
     check("display_name = 新.戳一戳", metadata.get("display_name") == "新.戳一戳", str(metadata.get("display_name")))
     check("author = 娜莉灵", metadata.get("author") == "娜莉灵", str(metadata.get("author")))
-    check("version = v1.91.79", metadata.get("version") == "v1.91.79", str(metadata.get("version")))
+    check("version = v1.91.78", metadata.get("version") == "v1.91.78", str(metadata.get("version")))
     check("目录名与 metadata.name 一致", PLUGIN_NAME == metadata.get("name"), f"{PLUGIN_NAME} vs {metadata.get('name')}")
     check("声明了多平台支持", len(metadata.get("support_platforms") or []) >= 5)
 
@@ -194,7 +194,7 @@ async def main() -> int:
             status_out.append(item)
         status_text = smoke.chain_text(status_out)
         check("/戳状态 有输出", "运行状态" in status_text, status_text[:80])
-        check("/戳状态 显示版本", "v1.91.79" in status_text, status_text[:80])
+        check("/戳状态 显示版本", "v1.91.78" in status_text, status_text[:80])
         check("/戳状态 显示插件名", "新.戳一戳" in status_text, status_text[:80])
 
         # 7. 热重载：WebUI 保存配置后，插件立刻读到新值

@@ -9,3 +9,9 @@ venv/
 Thumbs.db
 *.zip
 .pytest_cache/
+
+# 从插件目录里直接跑测试时，AstrBot 会在旁边生成自己的运行时数据
+# （data_v4.db / cmd_config.json / t2i_templates…）。绝不能提交，也绝不能进发布包。
+/data/
+/astrbot_data/
+*.zip.superseded
