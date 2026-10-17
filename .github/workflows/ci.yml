@@ -42,6 +42,7 @@ jobs:
           meta = yaml.safe_load(open("metadata.yaml", encoding="utf-8"))
           for field in ("name", "desc", "version", "author"):
               assert isinstance(meta.get(field), str) and meta[field].strip(), f"metadata 缺少 {field}"
-          assert meta["name"] == "astrbot_plugin_superpoke"
+          assert meta["name"] == "astrbot_plugin_poke_pony", meta["name"]
+          assert meta["author"] == "娜莉灵", meta["author"]
           print("配置与元数据校验通过")
           PY

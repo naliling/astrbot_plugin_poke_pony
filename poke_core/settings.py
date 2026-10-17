@@ -4,6 +4,12 @@ AstrBot 的插件配置是「WebUI 表单 -> JSON dict」，键名是中文、�
 字符串或数字，而且老用户升级后配置里往往缺字段。本模块负责把这些原始数据
 收敛成一个**只读、强类型、带默认值**的 :class:`Settings`，让业务代码不用
 到处写 ``.get(..., {})`` 和 try/except。
+
+设计约定（v1.91.79 起）：
+
+- **台词类配置一律留空**：发言模板、彩蛋模板、怼人模板默认都是空列表，
+  由使用者自己写。插件不预设任何「机器人该说什么」。
+- **功能类配置保留默认**：触发词这类「入口」保留占位值，保证装上就能被触发。
 """
 
 from __future__ import annotations
@@ -32,152 +38,56 @@ class PlatformProfile:
     supports_at: bool
     """是否支持 At 消息段。"""
     text_template: str
-    """无法原生回戳时使用的拟真文案模板。"""
+    """无法原生回戳时使用的拟真文案模板；留空表示不做拟真回戳。"""
     emoji: str = ""
     """拟真文案前的点缀表情。"""
 
     def render_template(self) -> str:
+        if not self.text_template:
+            return ""
         if self.emoji and not self.text_template.startswith(self.emoji):
             return f"{self.emoji} {self.text_template}"
         return self.text_template
 
 
+def _profile(name: str, native: bool = False, at: bool = False) -> PlatformProfile:
+    """构造一个「拟真文案留空」的平台画像。"""
+    return PlatformProfile(
+        name=name,
+        native_poke=native,
+        supports_at=at,
+        text_template="",
+        emoji="",
+    )
+
+
 #: 各平台默认画像。键名与 AstrBot ``ADAPTER_NAME_2_TYPE`` 保持一致。
+#: 拟真文案一律留空：想用哪个平台，就在「平台适配」里自己写。
 DEFAULT_PROFILES: dict[str, PlatformProfile] = {
-    "aiocqhttp": PlatformProfile(
-        name="aiocqhttp",
-        native_poke=True,
-        supports_at=True,
-        text_template="（{bot} 反手戳了戳 {target}）",
-    ),
-    "satori": PlatformProfile(
-        name="satori",
-        native_poke=True,
-        supports_at=True,
-        text_template="（{bot} 反手戳了戳 {target}）",
-    ),
-    "qq_official": PlatformProfile(
-        name="qq_official",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "qq_official_webhook": PlatformProfile(
-        name="qq_official_webhook",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "telegram": PlatformProfile(
-        name="telegram",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "lark": PlatformProfile(
-        name="lark",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👆",
-    ),
-    "wecom": PlatformProfile(
-        name="wecom",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 拍了拍 {target}",
-        emoji="👋",
-    ),
-    "wecom_ai_bot": PlatformProfile(
-        name="wecom_ai_bot",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 拍了拍 {target}",
-        emoji="👋",
-    ),
-    "weixin_oc": PlatformProfile(
-        name="weixin_oc",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 拍了拍 {target}",
-        emoji="👋",
-    ),
-    "weixin_official_account": PlatformProfile(
-        name="weixin_official_account",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 拍了拍 {target}",
-        emoji="👋",
-    ),
-    "dingtalk": PlatformProfile(
-        name="dingtalk",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "discord": PlatformProfile(
-        name="discord",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "slack": PlatformProfile(
-        name="slack",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "kook": PlatformProfile(
-        name="kook",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "line": PlatformProfile(
-        name="line",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "misskey": PlatformProfile(
-        name="misskey",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "mattermost": PlatformProfile(
-        name="mattermost",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
-    "webchat": PlatformProfile(
-        name="webchat",
-        native_poke=False,
-        supports_at=False,
-        text_template="{bot} 戳了戳 {target}",
-        emoji="👉",
-    ),
+    "aiocqhttp": _profile("aiocqhttp", native=True, at=True),
+    "satori": _profile("satori", native=True, at=True),
+    "qq_official": _profile("qq_official"),
+    "qq_official_webhook": _profile("qq_official_webhook"),
+    "telegram": _profile("telegram"),
+    "lark": _profile("lark"),
+    "wecom": _profile("wecom"),
+    "wecom_ai_bot": _profile("wecom_ai_bot"),
+    "weixin_oc": _profile("weixin_oc"),
+    "weixin_official_account": _profile("weixin_official_account"),
+    "dingtalk": _profile("dingtalk"),
+    "discord": _profile("discord"),
+    "slack": _profile("slack"),
+    "kook": _profile("kook"),
+    "line": _profile("line"),
+    "misskey": _profile("misskey"),
+    "mattermost": _profile("mattermost"),
+    "webchat": _profile("webchat"),
+    "matrix": _profile("matrix"),
+    "vocechat": _profile("vocechat"),
 }
 
-#: 未知适配器的兜底画像：纯文本拟真，保证「任何平台都能跑」。
-FALLBACK_PROFILE = PlatformProfile(
-    name="default",
-    native_poke=False,
-    supports_at=False,
-    text_template="{bot} 戳了戳 {target}",
-    emoji="👉",
-)
+#: 未知适配器的兜底画像：保证「任何平台都能跑」，只是没有拟真文案。
+FALLBACK_PROFILE = _profile("default")
 
 #: 「触发词」默认生效的平台（原生戳能力之外的平台）
 DEFAULT_TEXT_TRIGGER_PLATFORMS: tuple[str, ...] = (
@@ -197,17 +107,17 @@ DEFAULT_TEXT_TRIGGER_PLATFORMS: tuple[str, ...] = (
     "misskey",
     "mattermost",
     "webchat",
+    "matrix",
+    "vocechat",
 )
 
+#: 触发词是「入口」而不是「台词」，所以保留默认值，保证非 QQ 平台装上就能被戳。
 DEFAULT_TRIGGERS: tuple[str, ...] = ("戳一戳", "戳戳", "拍一拍", "戳我", "nudge")
 
-#: 配置里一条发言模板都没有时的兜底发言（避免「装好插件却一声不吭」）
-DEFAULT_SPEECH_POOL: tuple[dict, ...] = (
-    {"text": "（被戳得一激灵）谁啊！", "weight": 1, "enabled": True},
-    {"text": "戳什么戳，再戳我可要还手了。", "weight": 1, "enabled": True},
-    {"text": "（抖了抖）今天第 {count} 次了，手指不疼吗？", "weight": 2, "enabled": True},
-    {"text": "在的在的，别戳啦～", "weight": 1, "enabled": True},
-)
+#: 防骚扰触发后的动作
+HARASS_SILENT = "静默不回应"
+HARASS_SILENT_AND_REPLY = "静默并怼人"
+HARASS_REPLY_ONLY = "只怼人"
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +226,12 @@ class Settings:
     group_enabled: bool = True
     private_enabled: bool = True
     only_self_target: bool = True
+    bot_nickname: str = "我"
     user_cooldown: float = 3.0
-    per_minute_limit: int = 30
     dedupe_window_ms: int = 800
     quiet_enabled: bool = False
     quiet_start: int | None = None
     quiet_end: int | None = None
-    bot_nickname: str = "我"
 
     # ---- 发言 ----
     speech_enabled: bool = True
@@ -330,9 +239,17 @@ class Settings:
     speech_mode: str = "权重随机"
     speech_at: bool = True
     speech_pool: tuple[dict, ...] = ()
-    combo_threshold: int = 0
+    combo_threshold: int = 5
     combo_pool: tuple[dict, ...] = ()
-    link_mode: str = "发言与回戳独立"
+
+    # ---- LLM ----
+    llm_enabled: bool = False
+    llm_probability: int = 100
+    llm_max_chars: int = 40
+    llm_timeout: float = 10.0
+    llm_per_minute: int = 5
+    llm_system_prompt: str = ""
+    llm_extra_prompt: str = ""
 
     # ---- 回戳 ----
     poke_back_enabled: bool = True
@@ -342,7 +259,15 @@ class Settings:
     prefer_native: bool = True
     native_fallback: bool = True
     chain_poke: bool = False
-    poke_back_text: str = "（{bot} 反手戳了戳 {target}）"
+    link_mode: str = "发言与回戳独立"
+
+    # ---- 防骚扰 ----
+    harass_enabled: bool = True
+    harass_threshold: int = 5
+    harass_action: str = HARASS_SILENT
+    harass_pool: tuple[dict, ...] = ()
+    harass_cooldown: float = 60.0
+    per_minute_limit: int = 30
 
     # ---- 指令 ----
     triggers: tuple[str, ...] = DEFAULT_TRIGGERS
@@ -361,11 +286,14 @@ class Settings:
     stats_enabled: bool = True
     ranking_size: int = 10
 
-    # ---- 智能 ----
-    llm_tool_enabled: bool = False
+    # ---- 人形化联动 ----
+    humanoid_enabled: bool = False
+    humanoid_state_path: str = ""
+    humanoid_silent_when_asleep: bool = True
 
     # ---- 平台 ----
     profiles: dict[str, PlatformProfile] = field(default_factory=dict)
+    custom_platforms: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
     # 构造
@@ -376,14 +304,17 @@ class Settings:
 
         base = _section(raw, "基础设置", "base")
         speech = _section(raw, "发言设置", "发言", "speech")
+        llm = _section(raw, "LLM 生成", "LLM生成", "llm")
         poke = _section(raw, "回戳设置", "回戳", "poke")
+        harass = _section(raw, "防骚扰", "harass")
         cmd = _section(raw, "指令设置", "command")
         lists = _section(raw, "名单设置", "lists")
         stats = _section(raw, "统计设置", "stats")
-        smart = _section(raw, "智能功能", "smart")
+        humanoid = _section(raw, "人形化联动", "humanoid")
         platforms_cfg = _section(raw, "平台适配", "platforms")
+        custom_platforms = raw.get("自定义平台")
 
-        profiles = _build_profiles(platforms_cfg)
+        profiles = _build_profiles(platforms_cfg, custom_platforms)
 
         return cls(
             enabled=as_bool(base.get("总开关"), True),
@@ -391,21 +322,26 @@ class Settings:
             group_enabled=as_bool(base.get("群聊启用"), True),
             private_enabled=as_bool(base.get("私聊启用"), True),
             only_self_target=as_bool(base.get("只响应戳机器人"), True),
+            bot_nickname=as_str(base.get("机器人昵称"), "我") or "我",
             user_cooldown=float(as_int(base.get("用户冷却秒数"), 3, 0, 3600)),
-            per_minute_limit=as_int(base.get("每分钟上限"), 30, 0, 600),
             dedupe_window_ms=as_int(base.get("去重窗口毫秒"), 800, 0, 10000),
             quiet_enabled=as_bool(base.get("安静时段开关"), False),
             quiet_start=parse_hhmm(base.get("安静时段开始")),
             quiet_end=parse_hhmm(base.get("安静时段结束")),
-            bot_nickname=as_str(base.get("机器人昵称"), "我") or "我",
             speech_enabled=as_bool(speech.get("发言开关"), True),
             speech_probability=as_int(speech.get("发言概率"), 100, 0, 100),
             speech_mode=as_str(speech.get("选取模式"), "权重随机"),
             speech_at=as_bool(speech.get("附带艾特"), True),
-            speech_pool=_normalize_pool(speech.get("发言模板")) or DEFAULT_SPEECH_POOL,
-            combo_threshold=as_int(speech.get("连击彩蛋阈值"), 0, 0, 1000),
+            speech_pool=_normalize_pool(speech.get("发言模板")),
+            combo_threshold=as_int(speech.get("连击彩蛋阈值"), 5, 0, 1000),
             combo_pool=_normalize_pool(speech.get("连击彩蛋模板")),
-            link_mode=as_str(poke.get("联动模式"), "发言与回戳独立"),
+            llm_enabled=as_bool(llm.get("LLM台词开关"), False),
+            llm_probability=as_int(llm.get("LLM触发概率"), 100, 0, 100),
+            llm_max_chars=as_int(llm.get("LLM最大字数"), 40, 1, 500),
+            llm_timeout=float(as_int(llm.get("LLM超时秒数"), 10, 1, 120)),
+            llm_per_minute=as_int(llm.get("LLM每分钟上限"), 5, 0, 120),
+            llm_system_prompt=as_str(llm.get("LLM系统提示"), ""),
+            llm_extra_prompt=as_str(llm.get("LLM附加要求"), ""),
             poke_back_enabled=as_bool(poke.get("回戳开关"), True),
             poke_back_probability=as_int(poke.get("回戳概率"), 100, 0, 100),
             poke_back_times=as_int(poke.get("回戳次数"), 1, 0, 10),
@@ -413,7 +349,13 @@ class Settings:
             prefer_native=as_bool(poke.get("优先原生回戳"), True),
             native_fallback=as_bool(poke.get("原生失败降级"), True),
             chain_poke=as_bool(poke.get("链式回戳（实验）"), False),
-            poke_back_text=as_str(poke.get("回戳文案"), "（{bot} 反手戳了戳 {target}）"),
+            link_mode=as_str(poke.get("联动模式"), "发言与回戳独立"),
+            harass_enabled=as_bool(harass.get("防骚扰开关"), True),
+            harass_threshold=as_int(harass.get("每分钟阈值"), 5, 1, 600),
+            harass_action=as_str(harass.get("触发动作"), HARASS_SILENT),
+            harass_pool=_normalize_pool(harass.get("怼人模板")),
+            harass_cooldown=float(as_int(harass.get("怼人冷却秒数"), 60, 0, 3600)),
+            per_minute_limit=as_int(harass.get("全局每分钟上限"), 30, 0, 600),
             triggers=as_str_list(cmd.get("触发词")) or DEFAULT_TRIGGERS,
             text_trigger_platforms=as_str_list(cmd.get("文本触发平台"))
             or DEFAULT_TEXT_TRIGGER_PLATFORMS,
@@ -426,8 +368,11 @@ class Settings:
             user_blacklist=as_str_list(lists.get("用户黑名单")),
             stats_enabled=as_bool(stats.get("统计开关"), True),
             ranking_size=as_int(stats.get("排行榜长度"), 10, 1, 50),
-            llm_tool_enabled=as_bool(smart.get("LLM工具开关"), False),
+            humanoid_enabled=as_bool(humanoid.get("联动开关"), False),
+            humanoid_state_path=as_str(humanoid.get("状态文件路径"), ""),
+            humanoid_silent_when_asleep=as_bool(humanoid.get("睡着时不回应"), True),
             profiles=profiles,
+            custom_platforms=_custom_platform_names(custom_platforms),
         )
 
     # ------------------------------------------------------------------
@@ -442,6 +387,9 @@ class Settings:
         return platform in self.platforms
 
     def text_trigger_allowed(self, platform: str) -> bool:
+        # 自定义平台是使用者主动加的，默认就当它需要触发词入口
+        if platform in self.custom_platforms:
+            return True
         if not self.text_trigger_platforms:
             return True
         return platform in self.text_trigger_platforms
@@ -471,29 +419,55 @@ class Settings:
             return start <= minutes_of_day < end
         return minutes_of_day >= start or minutes_of_day < end
 
+    def harass_should_reply(self) -> bool:
+        """防骚扰触发时是否要发一条「怼人」文案。"""
+        return self.harass_action in (HARASS_SILENT_AND_REPLY, HARASS_REPLY_ONLY)
 
-def _build_profiles(platforms_cfg: dict) -> dict[str, PlatformProfile]:
-    """把「平台适配」配置小节合并进默认画像。"""
+    def harass_should_silent(self) -> bool:
+        """防骚扰触发时是否要静默（不回话、不回戳）。"""
+        return self.harass_action in (HARASS_SILENT, HARASS_SILENT_AND_REPLY)
+
+
+def _build_profiles(platforms_cfg: dict, custom_platforms: Any) -> dict[str, PlatformProfile]:
+    """把「平台适配」与「自定义平台」合并进默认画像。"""
     merged: dict[str, PlatformProfile] = dict(DEFAULT_PROFILES)
-    for name, raw in platforms_cfg.items():
-        if not isinstance(raw, dict):
-            continue
-        default = DEFAULT_PROFILES.get(name) or PlatformProfile(
-            name=name,
-            native_poke=False,
-            supports_at=False,
-            text_template=FALLBACK_PROFILE.text_template,
-            emoji=FALLBACK_PROFILE.emoji,
-        )
-        text_template = as_str(raw.get("拟真文案"), default.text_template) or default.text_template
+
+    def apply(name: str, raw: dict) -> None:
+        default = merged.get(name) or _profile(name)
         merged[name] = PlatformProfile(
             name=name,
             native_poke=as_bool(raw.get("原生回戳"), default.native_poke),
             supports_at=as_bool(raw.get("支持艾特"), default.supports_at),
-            text_template=text_template,
+            text_template=as_str(raw.get("拟真文案"), default.text_template),
             emoji=as_str(raw.get("表情前缀"), default.emoji),
         )
+
+    for name, raw in platforms_cfg.items():
+        if isinstance(raw, dict):
+            apply(name, raw)
+
+    # 自定义平台：允许使用者给任何「还没内置画像」的适配器补一套能力
+    if isinstance(custom_platforms, list):
+        for item in custom_platforms:
+            if not isinstance(item, dict):
+                continue
+            name = as_str(item.get("平台ID")).strip()
+            if name:
+                apply(name, item)
+
     return merged
+
+
+def _custom_platform_names(custom_platforms: Any) -> tuple[str, ...]:
+    if not isinstance(custom_platforms, list):
+        return ()
+    names: list[str] = []
+    for item in custom_platforms:
+        if isinstance(item, dict):
+            name = as_str(item.get("平台ID")).strip()
+            if name and name not in names:
+                names.append(name)
+    return tuple(names)
 
 
 def _normalize_pool(value: Any) -> tuple[dict, ...]:

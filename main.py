@@ -1,27 +1,32 @@
-"""新·戳一戳 —— AstrBot 跨平台戳一戳增强插件。
+"""新.戳一戳 —— AstrBot 跨平台戳一戳增强插件。
 
 功能总览
 --------
 - **原生戳一戳**：QQ / OneBot 协议端的 ``Poke`` 消息段与 ``notice.notify.poke``
   通知双通道监听，自动去重，不再漏事件；
 - **全平台兼容**：Telegram、飞书、企业微信、微信个人号、QQ 官方机器人等没有原生
-  戳能力的平台，用「触发词 + 指令」模拟，回戳走拟真文案；
+  戳能力的平台，用「触发词 + 指令」模拟，回戳走各平台自己的拟真文案；
 - **回戳三级降级**：原生 API → Poke 消息段 → 拟真文案，任何一级失败都不会把
-  异常抛给用户（老版本正是死在这一步）；
+  异常抛给用户；
 - **发言引擎**：权重随机 / 轮换 / 洗牌袋三种模式，支持变量插值、连戳彩蛋；
-- **防刷屏**：用户冷却、每分钟上限、安静时段、黑白名单；
+- **LLM 台词**：可选让模型现场生成一句，带超时、字数上限与每分钟配额，失败自动
+  回退模板；
+- **防骚扰**：同一用户 60 秒内被戳超过阈值就静默（可选怼一句），**不拉黑**；
+- **人形化联动**：只读 humanoid_core 导出的版本化契约，睡着时不吵、情绪带进提示词；
 - **数据看板**：今日/累计被戳次数、连击数、排行榜，KV 持久化；
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：naliling ｜ 版本：v2.0.0 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.79 ｜ 许可：MIT
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import random
 import sys
+from collections import deque
 from datetime import datetime
 from typing import Any, AsyncGenerator
 
@@ -37,7 +42,8 @@ try:  # AstrBot 标准加载方式：插件目录作为包导入
         first_at_target,
         reply_target,
     )
-    from .poke_core.ratelimit import RateLimiter
+    from .poke_core.humanoid import HumanoidBridge, HumanoidSnapshot
+    from .poke_core.ratelimit import BurstTracker, RateLimiter
     from .poke_core.settings import Settings, as_str
     from .poke_core.stats import StatsStore
     from .poke_core.templates import TemplatePool, render_template
@@ -50,7 +56,8 @@ except ImportError:  # pragma: no cover - 兼容以顶层模块方式加载
         first_at_target,
         reply_target,
     )
-    from poke_core.ratelimit import RateLimiter
+    from poke_core.humanoid import HumanoidBridge, HumanoidSnapshot
+    from poke_core.ratelimit import BurstTracker, RateLimiter
     from poke_core.settings import Settings, as_str
     from poke_core.stats import StatsStore
     from poke_core.templates import TemplatePool, render_template
@@ -61,15 +68,22 @@ except Exception:  # pragma: no cover
     At = Plain = None  # type: ignore[assignment]
 
 
-PLUGIN_NAME = "新·戳一戳"
+PLUGIN_NAME = "新.戳一戳"
+PLUGIN_VERSION = "v1.91.79"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 
-HELP_TEXT = """🫵 新·戳一戳 · 使用说明
+#: LLM 台词的内置系统提示（用户可在「LLM 系统提示」里整体覆盖）
+DEFAULT_LLM_SYSTEM = (
+    "你正在被聊天对象「戳一戳」。用你此刻的语气回一句就好："
+    "不要解释、不要加引号、不要写旁白，只输出这句话本身。"
+)
+
+HELP_TEXT = f"""🫵 {PLUGIN_NAME} {PLUGIN_VERSION} · 使用说明
 
 【被动】别人戳你时自动回应
 · QQ：双击头像戳一戳，机器人会发言 / 回戳
-· 其他平台：发送「戳一戳」「戳戳」「拍一拍」「戳我」触发
+· 其他平台：发送触发词（默认「戳一戳」「戳戳」「拍一拍」「戳我」）触发
 
 【主动】用指令戳别人
 · /戳 @某人         —— 戳一下
@@ -92,11 +106,16 @@ class SuperPokePlugin(Star):
         self._logger = getattr(self, "logger", None) or logger
         self._stats = StatsStore(plugin=self, logger=self._logger, enabled=True)
         self._limiter = RateLimiter()
+        self._burst = BurstTracker(window=60.0)
         self._rng = random.Random()
         self._speech_pool = TemplatePool(())
         self._combo_pool = TemplatePool(())
+        self._harass_pool = TemplatePool(())
         self._pool_key: tuple | None = None
         self._started_at = datetime.now()
+        self._llm_window: deque[float] = deque()
+        self._humanoid: HumanoidBridge | None = None
+        self._humanoid_key: tuple[bool, str] | None = None
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -106,9 +125,12 @@ class SuperPokePlugin(Star):
         self._stats.enabled = settings.stats_enabled
         await self._stats.load()
         self._logger.info(
-            f"[{PLUGIN_NAME}] 已启动：{len(settings.speech_pool)} 条发言模板，"
+            f"[{PLUGIN_NAME}] {PLUGIN_VERSION} 已启动："
+            f"发言模板 {len(settings.speech_pool)} 条，"
             f"回戳={'开' if settings.poke_back_enabled else '关'}，"
-            f"统计={'开' if settings.stats_enabled else '关'}",
+            f"LLM={'开' if settings.llm_enabled else '关'}，"
+            f"防骚扰={'开' if settings.harass_enabled else '关'}，"
+            f"人形化联动={'开' if settings.humanoid_enabled else '关'}",
         )
 
     async def terminate(self) -> None:
@@ -155,9 +177,21 @@ class SuperPokePlugin(Star):
             return
 
         self._limiter.purge()
+        self._burst.purge()
         if settings.stats_enabled:
             await self._stats.load()
 
+        # ---- 人形化联动：她睡着了就别吵 ----
+        humanoid = self._humanoid_snapshot(settings, event, signal.sender_id)
+        if (
+            humanoid is not None
+            and humanoid.asleep
+            and settings.humanoid_silent_when_asleep
+        ):
+            self._logger.debug(f"[{PLUGIN_NAME}] 人形化核心处于睡眠状态，本次不回应")
+            return
+
+        # ---- 冷却 / 全局限流 ----
         allowed, wait = self._limiter.check_user(signal.sender_id, settings.user_cooldown)
         if not allowed:
             self._logger.debug(
@@ -170,6 +204,26 @@ class SuperPokePlugin(Star):
 
         self_id = as_str(event.get_self_id())
         proxy_target = bool(signal.target_id and self_id and signal.target_id != self_id)
+
+        # ---- 防骚扰：60 秒窗口内的连戳计数 ----
+        burst = self._burst.note(signal.sender_id) if settings.harass_enabled else 0
+        if settings.harass_enabled and burst > settings.harass_threshold:
+            self._limiter.touch_global()
+            event.set_extra(HANDLED_FLAG, True)
+            self._logger.info(
+                f"[{PLUGIN_NAME}] 用户 {signal.sender_name or signal.sender_id} "
+                f"60 秒内第 {burst} 次戳，超过阈值 {settings.harass_threshold}，"
+                f"按「{settings.harass_action}」处理",
+            )
+            if settings.harass_should_reply():
+                template = self._pick_harass(settings)
+                if template:
+                    context = self._build_context(settings, signal, burst, burst)
+                    text = render_template(template, context)
+                    yield event.chain_result(
+                        self._build_speech_chain(settings, signal, text),
+                    )
+            return
 
         # ---- 统计 ----
         count = 1
@@ -198,9 +252,8 @@ class SuperPokePlugin(Star):
                 speech = False
 
             if speech:
-                template = self._pick_speech(settings, streak)
-                if template:
-                    text = render_template(template, context)
+                text = await self._compose_speech(event, settings, signal, count, streak, humanoid)
+                if text:
                     chain = self._build_speech_chain(settings, signal, text)
                     self._logger.info(
                         f"[{PLUGIN_NAME}] 回应 {signal.sender_name or signal.sender_id}"
@@ -228,9 +281,93 @@ class SuperPokePlugin(Star):
                 f"[{PLUGIN_NAME}] 回戳 {target_name or target_id} 成功（{outcome.message}）",
             )
         else:
-            self._logger.warning(
-                f"[{PLUGIN_NAME}] 回戳 {target_name or target_id} 失败（{outcome.message}），已静默跳过",
+            self._logger.debug(
+                f"[{PLUGIN_NAME}] 回戳 {target_name or target_id} 未执行（{outcome.message}）",
             )
+
+    # ------------------------------------------------------------------
+    # 发言合成：LLM 优先，失败/未配置时回退模板
+    # ------------------------------------------------------------------
+    async def _compose_speech(
+        self,
+        event: AstrMessageEvent,
+        settings: Settings,
+        signal: PokeSignal,
+        count: int,
+        streak: int,
+        humanoid: HumanoidSnapshot | None,
+    ) -> str | None:
+        if (
+            settings.llm_enabled
+            and self._llm_quota_ok(settings)
+            and self._decide(True, settings.llm_probability)
+        ):
+            text = await self._llm_speech(event, settings, signal, count, streak, humanoid)
+            if text:
+                self._llm_window.append(asyncio.get_running_loop().time())
+                return text
+        template = self._pick_speech(settings, streak)
+        if not template:
+            return None
+        context = self._build_context(settings, signal, count, streak)
+        return render_template(template, context)
+
+    def _llm_quota_ok(self, settings: Settings) -> bool:
+        if settings.llm_per_minute <= 0:
+            return False
+        now = asyncio.get_running_loop().time()
+        while self._llm_window and now - self._llm_window[0] > 60.0:
+            self._llm_window.popleft()
+        return len(self._llm_window) < settings.llm_per_minute
+
+    async def _llm_speech(
+        self,
+        event: AstrMessageEvent,
+        settings: Settings,
+        signal: PokeSignal,
+        count: int,
+        streak: int,
+        humanoid: HumanoidSnapshot | None,
+    ) -> str | None:
+        """让模型现场生成一句；任何异常都静默回退到模板。"""
+        try:
+            getter = getattr(self.context, "get_using_provider", None)
+            provider = getter(umo=event.unified_msg_origin) if callable(getter) else None
+            if provider is None:
+                return None
+
+            system = settings.llm_system_prompt.strip() or DEFAULT_LLM_SYSTEM
+            lines = [
+                f"戳你的人：{signal.sender_name or signal.sender_id}",
+                f"这是对方今天第 {count} 次戳你，当前连击 {streak} 次。",
+            ]
+            if humanoid is not None:
+                lines.extend(humanoid.as_prompt_lines())
+            if settings.llm_extra_prompt.strip():
+                lines.append(settings.llm_extra_prompt.strip())
+            if settings.llm_max_chars:
+                lines.append(f"控制在 {settings.llm_max_chars} 个字以内。")
+            prompt = "\n".join(lines)
+
+            response = await asyncio.wait_for(
+                provider.text_chat(prompt=prompt, system_prompt=system),
+                timeout=settings.llm_timeout,
+            )
+            text = (getattr(response, "completion_text", "") or "").strip()
+            if not text:
+                return None
+            limit = settings.llm_max_chars
+            if humanoid is not None and humanoid.max_chars > 0:
+                limit = min(limit, humanoid.max_chars) if limit else humanoid.max_chars
+            if limit and len(text) > limit:
+                text = text[:limit].rstrip()
+            return text or None
+        except asyncio.TimeoutError:
+            self._logger.warning(f"[{PLUGIN_NAME}] LLM 生成超时，回退模板")
+            return None
+        except Exception as exc:  # pragma: no cover - 绝不把异常抛给用户
+            self._logger.warning(f"[{PLUGIN_NAME}] LLM 生成失败，回退模板：{exc}")
+            return None
 
     # ------------------------------------------------------------------
     # 指令：/戳
@@ -290,7 +427,7 @@ class SuperPokePlugin(Star):
             return f"已{verb} {target_id} ×{times} ✅"
         return (
             f"戳失败了：{outcome.detail or '当前平台不支持'}\n"
-            "可以试试开启「原生失败降级」，让机器人改用拟真文案。"
+            "可以试试开启「原生失败降级」，或在「平台适配」里填一条拟真文案。"
         )
 
     # ------------------------------------------------------------------
@@ -310,18 +447,29 @@ class SuperPokePlugin(Star):
         minutes = remainder // 60
 
         lines = [
-            f"🫵 {PLUGIN_NAME} · 运行状态",
+            f"🫵 {PLUGIN_NAME} {PLUGIN_VERSION} · 运行状态",
             f"平台：{platform}（原生戳：{'✅' if profile.native_poke else '❌ 拟真模式'}）",
             f"总开关：{'✅' if settings.enabled else '❌'}　"
             f"回戳：{'✅' if settings.poke_back_enabled else '❌'}　"
             f"发言：{'✅' if settings.speech_enabled else '❌'}",
             f"发言模板：{len(settings.speech_pool)} 条（{settings.speech_mode}）",
+            f"LLM 台词：{'✅' if settings.llm_enabled else '❌'}　"
+            f"防骚扰：{'✅ ' + str(settings.harass_threshold) + '/分' if settings.harass_enabled else '❌'}",
             f"回戳次数：{settings.poke_back_times}　冷却：{settings.user_cooldown:.0f}s　"
             f"限流：{settings.per_minute_limit}/分钟",
             f"今日被戳：{summary['today_total']} 次（{summary['today_users']} 人）",
             f"累计被戳：{summary['all_total']} 次",
             f"已运行：{hours} 小时 {minutes} 分钟",
         ]
+
+        humanoid = self._humanoid_snapshot(settings, event, as_str(event.get_sender_id()))
+        if settings.humanoid_enabled:
+            if humanoid is not None:
+                lines.append(f"人形化：{humanoid.summary() or '已连接'}"
+                             f"{'（睡眠中）' if humanoid.asleep else ''}")
+            else:
+                lines.append("人形化：已开启，但没读到 humanoid_core 的契约")
+
         if settings.in_quiet_hours(_now_minutes()):
             lines.append("😴 当前处于安静时段，不会回应")
         yield event.plain_result("\n".join(lines))
@@ -371,8 +519,6 @@ class SuperPokePlugin(Star):
             times(number): 戳的次数，范围 1-10，默认 1
         """
         settings = self._settings()
-        if not settings.llm_tool_enabled:
-            return "戳一戳工具未启用，请先在插件配置里打开「LLM工具开关」。"
         if not settings.enabled or not settings.active_poke_enabled:
             return "戳一戳功能当前已关闭。"
         target = as_str(target_id).strip()
@@ -400,12 +546,40 @@ class SuperPokePlugin(Star):
         return settings
 
     def _refresh_pools(self, settings: Settings) -> None:
-        key = (settings.speech_mode, settings.speech_pool, settings.combo_pool)
+        key = (
+            settings.speech_mode,
+            settings.speech_pool,
+            settings.combo_pool,
+            settings.harass_pool,
+        )
         if key == self._pool_key:
             return
         self._speech_pool = TemplatePool(settings.speech_pool, settings.speech_mode)
         self._combo_pool = TemplatePool(settings.combo_pool, settings.speech_mode)
+        self._harass_pool = TemplatePool(settings.harass_pool, settings.speech_mode)
         self._pool_key = key
+
+    def _humanoid_bridge(self, settings: Settings) -> HumanoidBridge:
+        key = (settings.humanoid_enabled, settings.humanoid_state_path)
+        if self._humanoid is None or key != self._humanoid_key:
+            self._humanoid = HumanoidBridge(override_path=settings.humanoid_state_path)
+            self._humanoid_key = key
+        return self._humanoid
+
+    def _humanoid_snapshot(
+        self,
+        settings: Settings,
+        event: AstrMessageEvent,
+        user_id: str,
+    ) -> HumanoidSnapshot | None:
+        if not settings.humanoid_enabled:
+            return None
+        try:
+            bridge = self._humanoid_bridge(settings)
+            return bridge.snapshot(as_str(event.get_self_id()), user_id)
+        except Exception as exc:  # pragma: no cover - 联动失败绝不外抛
+            self._logger.debug(f"[{PLUGIN_NAME}] 读取人形化契约失败：{exc}")
+            return None
 
     def _pass_gate(self, settings: Settings, signal: PokeSignal) -> bool:
         """平台 / 群聊私聊 / 名单 / 安静时段 的统一闸门。"""
@@ -496,6 +670,21 @@ class SuperPokePlugin(Star):
         )
         pool = self._combo_pool if use_combo else self._speech_pool
         return pool.pick(self._rng)
+
+    def _pick_harass(self, settings: Settings) -> str | None:
+        """防骚扰触发时取一条「怼人」文案；配了冷却就按冷却来。"""
+        if not settings.harass_pool:
+            return None
+        allowed, _ = self._limiter.check_user(
+            f"harass:{id(self)}",
+            settings.harass_cooldown,
+        )
+        if not allowed:
+            return None
+        text = self._harass_pool.pick(self._rng)
+        if text:
+            self._limiter.touch_user(f"harass:{id(self)}")
+        return text
 
     def _build_speech_chain(
         self,

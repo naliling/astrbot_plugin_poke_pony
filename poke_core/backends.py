@@ -120,6 +120,8 @@ class PokeBackend:
                 errors.append(f"chain: {exc}")
 
         if self.settings.native_fallback or not profile.native_poke:
+            if not profile.render_template():
+                return PokeOutcome(False, "skipped", "该平台未配置拟真文案（平台适配 → 拟真文案）")
             try:
                 await self._text_poke(event, profile, context, target_id)
                 return PokeOutcome(True, "text", "; ".join(errors))
@@ -213,7 +215,9 @@ class PokeBackend:
         if MessageChain is None or Plain is None:  # pragma: no cover
             raise BackendError("消息组件不可用")
 
-        template = profile.render_template() or self.settings.poke_back_text
+        template = profile.render_template()
+        if not template:
+            raise BackendError("该平台未配置拟真文案")
         text = render_template(template, context)
         chain = []
         if At is not None and profile.supports_at and str(target_id).isdigit():
