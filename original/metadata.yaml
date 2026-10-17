@@ -1,0 +1,7 @@
+name: astrbot_plugin_poke
+display_name: 戳一戳
+desc: 监听戳一戳事件，支持随机发言回复和自动回戳（群聊/私聊），发言内容与权重可自定义
+help: 无
+version: v1.0.0
+author: TenmaGabriel0721
+repo: https://github.com/TenmaGabriel0721/astrbot_plugin_soft_whitelist

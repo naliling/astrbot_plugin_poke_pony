@@ -1,0 +1,93 @@
+{
+  "发言": {
+    "description": "戳一戳发言相关配置",
+    "type": "object",
+    "items": {
+      "发言选取模式": {
+        "description": "发言选取模式",
+        "type": "string",
+        "hint": "随机选取：按权重随机选一条发言；轮换：按发言列表顺序依次选取",
+        "options": ["随机选取", "轮换"],
+        "default": "随机选取"
+      },
+      "戳一戳发言开关": {
+        "description": "是否启用戳一戳自动回复发言功能",
+        "type": "bool",
+        "hint": "启用后，当被戳一戳时会自动回复预设的发言",
+        "default": true
+      },
+      "戳一戳发言概率": {
+        "description": "发言触发的概率（百分比）",
+        "type": "int",
+        "hint": "范围 0-100，设为 100 则每次被戳都发言",
+        "default": 100
+      },
+      "戳一戳发言": {
+        "description": "戳一戳发言模板，支持添加多条随机回复",
+        "type": "template_list",
+        "templates": {
+          "speech": {
+            "name": "发言",
+            "display_item": "发言内容",
+            "items": {
+              "启用发言": {
+                "description": "是否启用该条发言",
+                "type": "bool",
+                "default": true
+              },
+              "发言内容": {
+                "description": "戳一戳时回复的发言内容",
+                "type": "string",
+                "hint": "支持文本消息",
+                "default": ""
+              },
+              "发言权重": {
+                "description": "发言权重，数值越大被随机选中的概率越高",
+                "type": "int",
+                "hint": "建议范围 1-10",
+                "default": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "回戳": {
+    "description": "回戳相关配置",
+    "type": "object",
+    "items": {
+      "回戳开关": {
+        "description": "是否启用被戳一戳时自动回戳功能",
+        "type": "bool",
+        "hint": "启用后，当被戳一戳时会自动回戳对方",
+        "default": true
+      },
+      "回戳概率": {
+        "description": "回戳触发的概率（百分比）",
+        "type": "int",
+        "hint": "范围 0-100，设为 100 则每次被戳都回戳",
+        "default": 100
+      },
+      "回戳次数": {
+        "description": "每次被戳时回戳的次数",
+        "type": "int",
+        "hint": "设置每次被戳时回戳的次数，设为 0 则不回戳",
+        "default": 1
+      }
+    }
+  },
+  "杂项": {
+    "description": "发言与回戳的联动行为控制",
+    "type": "object",
+    "items": {
+      "联动模式": {
+        "description": "发言与回戳的联动模式",
+        "type": "string",
+        "hint": "回戳时不发言：若触发回戳则跳过发言；仅回戳时发言：仅在触发回戳时才发言；发言与回戳独立：两者互不干扰",
+        "options": ["回戳时不发言", "仅回戳时发言", "发言与回戳独立"],
+        "default": "发言与回戳独立"
+      }
+    }
+  }
+}

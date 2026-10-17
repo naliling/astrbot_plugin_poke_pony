@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装校验依赖
+        run: python -m pip install --quiet pyyaml
+
+      - name: 语法检查
+        run: python -m compileall -q .
+
+      - name: 校验配置 schema 与元数据
+        run: |
+          python - <<'PY'
+          import json
+          import yaml
+
+          schema = json.load(open("_conf_schema.json", encoding="utf-8"))
+          allowed = {"int", "float", "bool", "string", "text", "list", "file", "object", "template_list", "dict"}
+
+          def walk(node, path=""):
+              for key, value in node.items():
+                  assert isinstance(value, dict), f"{path}{key} 必须是对象"
+                  assert value.get("type") in allowed, f"{path}{key} 类型非法: {value.get('type')}"
+                  if value["type"] == "object":
+                      walk(value["items"], f"{path}{key}.")
+
+          walk(schema)
+
+          meta = yaml.safe_load(open("metadata.yaml", encoding="utf-8"))
+          for field in ("name", "desc", "version", "author"):
+              assert isinstance(meta.get(field), str) and meta[field].strip(), f"metadata 缺少 {field}"
+          assert meta["name"] == "astrbot_plugin_superpoke"
+          print("配置与元数据校验通过")
+          PY

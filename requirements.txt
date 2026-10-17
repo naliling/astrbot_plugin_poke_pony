@@ -1,0 +1,2 @@
+# 新·戳一戳 无需额外依赖
+# 仅使用 AstrBot 内置 API 与 Python 标准库

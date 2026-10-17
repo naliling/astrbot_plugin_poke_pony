@@ -1,0 +1,604 @@
+{
+  "基础设置": {
+    "description": "总开关、平台范围与防刷屏参数",
+    "type": "object",
+    "items": {
+      "总开关": {
+        "description": "插件总开关",
+        "type": "bool",
+        "hint": "关闭后不再响应任何戳一戳事件，指令也会提示已关闭",
+        "default": true
+      },
+      "启用平台": {
+        "description": "生效的平台适配器 ID",
+        "type": "list",
+        "hint": "留空表示全部平台生效。可填：aiocqhttp / telegram / lark / wecom / wecom_ai_bot / weixin_oc / qq_official 等",
+        "default": []
+      },
+      "群聊启用": {
+        "description": "是否在群聊中生效",
+        "type": "bool",
+        "default": true
+      },
+      "私聊启用": {
+        "description": "是否在私聊中生效",
+        "type": "bool",
+        "default": true
+      },
+      "只响应戳机器人": {
+        "description": "只响应「戳机器人自己」的事件",
+        "type": "bool",
+        "hint": "关闭后，群里 A 戳 B 也会触发机器人的反应（容易被当成刷屏，谨慎关闭）",
+        "default": true
+      },
+      "机器人昵称": {
+        "description": "模板变量 {bot} 的取值",
+        "type": "string",
+        "hint": "用于「{bot} 戳了戳 {target}」这类拟真文案",
+        "default": "我"
+      },
+      "用户冷却秒数": {
+        "description": "同一用户的响应冷却（秒）",
+        "type": "int",
+        "hint": "0 表示不冷却。建议 2-5 秒，防止连点刷屏",
+        "default": 3
+      },
+      "每分钟上限": {
+        "description": "全局每分钟最多响应次数",
+        "type": "int",
+        "hint": "0 表示不限制。超出后本分钟内的戳一戳会被静默丢弃",
+        "default": 30
+      },
+      "去重窗口毫秒": {
+        "description": "同一事件去重窗口（毫秒）",
+        "type": "int",
+        "hint": "部分协议端会同时推送消息段与通知事件，留 500-1000 即可",
+        "default": 800
+      },
+      "安静时段开关": {
+        "description": "启用夜间免打扰",
+        "type": "bool",
+        "default": false
+      },
+      "安静时段开始": {
+        "description": "安静时段开始时间",
+        "type": "string",
+        "hint": "24 小时制，例如 23:30",
+        "default": "23:30"
+      },
+      "安静时段结束": {
+        "description": "安静时段结束时间",
+        "type": "string",
+        "hint": "支持跨零点，例如 07:00",
+        "default": "07:00"
+      }
+    }
+  },
+  "发言设置": {
+    "description": "被戳时的文字回应",
+    "type": "object",
+    "items": {
+      "发言开关": {
+        "description": "是否启用发言回应",
+        "type": "bool",
+        "default": true
+      },
+      "发言概率": {
+        "description": "发言触发概率（百分比）",
+        "type": "int",
+        "hint": "0-100，100 表示每次都回应",
+        "default": 100
+      },
+      "选取模式": {
+        "description": "发言模板的抽取方式",
+        "type": "string",
+        "options": ["权重随机", "轮换", "洗牌袋"],
+        "hint": "权重随机：按权重抽；轮换：按顺序循环；洗牌袋：一轮内不重复，最均匀",
+        "default": "权重随机"
+      },
+      "附带艾特": {
+        "description": "回应时是否 @ 戳你的人",
+        "type": "bool",
+        "hint": "仅对支持 At 消息段的平台生效（QQ / OneBot）",
+        "default": true
+      },
+      "连击彩蛋阈值": {
+        "description": "连戳多少次后切换到彩蛋模板",
+        "type": "int",
+        "hint": "0 表示关闭。连击判定窗口为 45 秒",
+        "default": 5
+      },
+      "发言模板": {
+        "description": "被戳时的回应模板",
+        "type": "template_list",
+        "templates": {
+          "speech": {
+            "name": "发言",
+            "display_item": "发言内容",
+            "items": {
+              "启用发言": {
+                "description": "是否启用该条发言",
+                "type": "bool",
+                "default": true
+              },
+              "发言内容": {
+                "description": "发言内容，支持 {sender} {count} {streak} {bot} 等变量",
+                "type": "string",
+                "hint": "可用变量：{sender} {sender_id} {target} {bot} {group} {count} {streak} {time} {date} {platform}",
+                "default": ""
+              },
+              "发言权重": {
+                "description": "权重随机模式下的权重",
+                "type": "int",
+                "hint": "数值越大越容易被选中，建议 1-10",
+                "default": 1
+              }
+            }
+          }
+        },
+        "default": [
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "（被戳得一激灵）谁啊！",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "戳什么戳，再戳我可要还手了。",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "在的在的，别戳啦～",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "（抖了抖）今天第 {count} 次了，手指不疼吗？",
+            "发言权重": 2
+          },
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "呜……轻点戳。",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "speech",
+            "启用发言": true,
+            "发言内容": "有事说事，别光戳。",
+            "发言权重": 1
+          }
+        ]
+      },
+      "连击彩蛋模板": {
+        "description": "连击达到阈值后使用的模板",
+        "type": "template_list",
+        "templates": {
+          "combo": {
+            "name": "彩蛋",
+            "display_item": "发言内容",
+            "items": {
+              "启用发言": {
+                "description": "是否启用该条彩蛋",
+                "type": "bool",
+                "default": true
+              },
+              "发言内容": {
+                "description": "彩蛋内容，支持 {streak} {sender} 等变量",
+                "type": "string",
+                "default": ""
+              },
+              "发言权重": {
+                "description": "权重随机模式下的权重",
+                "type": "int",
+                "default": 1
+              }
+            }
+          }
+        },
+        "default": [
+          {
+            "__template_key": "combo",
+            "启用发言": true,
+            "发言内容": "喂喂喂，{streak} 连戳了！手是租来的吗？",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "combo",
+            "启用发言": true,
+            "发言内容": "再戳我就把「戳一戳」开关关掉（威胁）",
+            "发言权重": 1
+          },
+          {
+            "__template_key": "combo",
+            "启用发言": true,
+            "发言内容": "（炸毛）{sender} 你给我住手！",
+            "发言权重": 1
+          }
+        ]
+      }
+    }
+  },
+  "回戳设置": {
+    "description": "被戳之后是否戳回去，以及怎么戳",
+    "type": "object",
+    "items": {
+      "回戳开关": {
+        "description": "是否启用自动回戳",
+        "type": "bool",
+        "default": true
+      },
+      "回戳概率": {
+        "description": "回戳触发概率（百分比）",
+        "type": "int",
+        "hint": "0-100，100 表示每次都回戳",
+        "default": 100
+      },
+      "回戳次数": {
+        "description": "每次回戳的次数",
+        "type": "int",
+        "hint": "仅原生回戳生效；拟真文案只发一条。0 表示不回戳",
+        "default": 1
+      },
+      "回戳间隔毫秒": {
+        "description": "多次回戳之间的间隔（毫秒）",
+        "type": "int",
+        "default": 300
+      },
+      "优先原生回戳": {
+        "description": "优先使用平台原生戳一戳接口",
+        "type": "bool",
+        "hint": "关闭后即使平台支持原生戳，也改用拟真文案",
+        "default": true
+      },
+      "原生失败降级": {
+        "description": "原生回戳失败时改用拟真文案",
+        "type": "bool",
+        "hint": "强烈建议开启：这正是老版本插件「戳一下就报错」的修复点",
+        "default": true
+      },
+      "链式回戳（实验）": {
+        "description": "原生失败时尝试把 Poke 消息段塞进消息链",
+        "type": "bool",
+        "hint": "部分协议端支持，部分会报错；开启后失败仍会降级到拟真文案",
+        "default": false
+      },
+      "回戳文案": {
+        "description": "拟真回戳的默认文案",
+        "type": "string",
+        "hint": "支持 {bot} {target} {sender} {times} 等变量；具体平台可在「平台适配」里单独覆盖",
+        "default": "（{bot} 反手戳了戳 {target}）"
+      },
+      "联动模式": {
+        "description": "发言与回戳的联动方式",
+        "type": "string",
+        "options": ["发言与回戳独立", "回戳时不发言", "仅回戳时发言"],
+        "default": "发言与回戳独立"
+      }
+    }
+  },
+  "平台适配": {
+    "description": "按平台覆盖戳一戳能力与拟真文案",
+    "type": "object",
+    "items": {
+      "aiocqhttp": {
+        "description": "QQ（OneBot v11 / NapCat / Lagrange）",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "使用 group_poke / friend_poke 原生回戳",
+            "type": "bool",
+            "default": true
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": true
+          },
+          "拟真文案": {
+            "description": "降级时使用的文案",
+            "type": "string",
+            "default": "（{bot} 反手戳了戳 {target}）"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "telegram": {
+        "description": "Telegram",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "Telegram 无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 戳了戳 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👉"
+          }
+        }
+      },
+      "lark": {
+        "description": "飞书",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "飞书无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 戳了戳 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👆"
+          }
+        }
+      },
+      "wecom": {
+        "description": "企业微信",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "企业微信无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 拍了拍 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👋"
+          }
+        }
+      },
+      "wecom_ai_bot": {
+        "description": "企业微信智能机器人",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 拍了拍 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👋"
+          }
+        }
+      },
+      "weixin_oc": {
+        "description": "微信个人号",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "微信个人号无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案（对应微信「拍一拍」）",
+            "type": "string",
+            "default": "{bot} 拍了拍 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👋"
+          }
+        }
+      },
+      "weixin_official_account": {
+        "description": "微信公众号",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 拍了拍 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👋"
+          }
+        }
+      },
+      "qq_official": {
+        "description": "QQ 官方机器人",
+        "type": "object",
+        "items": {
+          "原生回戳": {
+            "description": "QQ 官方机器人无原生戳一戳，请保持关闭",
+            "type": "bool",
+            "default": false
+          },
+          "支持艾特": {
+            "description": "支持 At 消息段",
+            "type": "bool",
+            "default": false
+          },
+          "拟真文案": {
+            "description": "拟真回戳文案",
+            "type": "string",
+            "default": "{bot} 戳了戳 {target}"
+          },
+          "表情前缀": {
+            "description": "文案前缀表情",
+            "type": "string",
+            "default": "👉"
+          }
+        }
+      }
+    }
+  },
+  "指令设置": {
+    "description": "触发词与主动戳指令",
+    "type": "object",
+    "items": {
+      "触发词": {
+        "description": "模拟戳一戳的触发词",
+        "type": "list",
+        "hint": "消息内容完全等于触发词时生效，例如「戳一戳」「拍一拍」",
+        "default": ["戳一戳", "戳戳", "拍一拍", "戳我", "nudge"]
+      },
+      "文本触发平台": {
+        "description": "触发词生效的平台",
+        "type": "list",
+        "hint": "QQ/OneBot 有原生戳能力，默认不在列表里，避免文字重复触发",
+        "default": [
+          "telegram",
+          "lark",
+          "wecom",
+          "wecom_ai_bot",
+          "weixin_oc",
+          "weixin_official_account",
+          "qq_official",
+          "qq_official_webhook",
+          "dingtalk",
+          "discord",
+          "slack",
+          "kook",
+          "line",
+          "misskey",
+          "mattermost",
+          "webchat"
+        ]
+      },
+      "主动戳开关": {
+        "description": "是否允许用 /戳 主动戳人",
+        "type": "bool",
+        "default": true
+      },
+      "主动戳仅管理员": {
+        "description": "仅管理员可以使用 /戳",
+        "type": "bool",
+        "default": false
+      },
+      "主动戳默认次数": {
+        "description": "未指定次数时的默认回戳次数",
+        "type": "int",
+        "default": 1
+      },
+      "主动戳冷却秒数": {
+        "description": "同一用户使用 /戳 的冷却",
+        "type": "int",
+        "default": 5
+      }
+    }
+  },
+  "名单设置": {
+    "description": "群与用户黑白名单",
+    "type": "object",
+    "items": {
+      "群白名单": {
+        "description": "只在这些群里生效",
+        "type": "list",
+        "hint": "留空表示不限制；填写后其他群一律忽略",
+        "default": []
+      },
+      "群黑名单": {
+        "description": "在这些群里不生效",
+        "type": "list",
+        "default": []
+      },
+      "用户黑名单": {
+        "description": "忽略这些用户的戳一戳",
+        "type": "list",
+        "default": []
+      }
+    }
+  },
+  "统计设置": {
+    "description": "计数与排行榜",
+    "type": "object",
+    "items": {
+      "统计开关": {
+        "description": "是否记录戳一戳统计",
+        "type": "bool",
+        "default": true
+      },
+      "排行榜长度": {
+        "description": "/戳榜 显示的条数",
+        "type": "int",
+        "default": 10
+      }
+    }
+  },
+  "智能功能": {
+    "description": "与 LLM 的联动",
+    "type": "object",
+    "items": {
+      "LLM工具开关": {
+        "description": "允许 LLM 调用 poke_user 工具主动戳人",
+        "type": "bool",
+        "hint": "开启后，模型可以在对话中自行决定戳一戳某人",
+        "default": false
+      }
+    }
+  }
+}

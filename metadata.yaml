@@ -1,0 +1,32 @@
+name: astrbot_plugin_superpoke
+display_name: 新.戳一戳
+desc: >-
+  全平台戳一戳增强引擎：QQ / OneBot 原生戳一戳双向监听与自动回戳，Telegram、
+  飞书、企业微信、微信个人号、QQ 官方机器人等无原生戳能力的平台通过触发词与指令
+  模拟；内置权重随机 / 轮换 / 洗牌袋三模发言引擎、变量插值、连戳彩蛋、三级回戳
+  降级、冷却与限流、黑白名单、安静时段、今日与累计统计、排行榜，以及 LLM 函数
+  工具，让机器人真的"会疼、会还手、会记仇"。
+short_desc: 跨平台戳一戳：原生回戳 + 拟真降级 + 发言引擎 + 排行榜
+version: v2.0.0
+author: naliling
+repo: https://github.com/naliling/astrbot_plugin_superpoke
+astrbot_version: ">=4.13.0"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - telegram
+  - lark
+  - wecom
+  - wecom_ai_bot
+  - weixin_oc
+  - weixin_official_account
+  - dingtalk
+  - discord
+  - slack
+  - kook
+  - satori
+  - line
+  - misskey
+  - mattermost
+  - webchat
