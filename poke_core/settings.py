@@ -187,6 +187,32 @@ def as_str_list(value: Any) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def parse_bot_aliases(value: Any) -> dict[str, str]:
+    """解析「多机器人别名」：``"3632823490=娜莉灵,2625379556=露娜"``。
+
+    分隔符容忍逗号 / 中文逗号 / 分号 / 换行；``=`` ``:`` ``：`` 都可以当分隔符。
+    解析不出来的片段直接跳过，绝不因为一行写错就丢掉整份别名表。
+    """
+    aliases: dict[str, str] = {}
+    text = as_str(value).strip()
+    if not text:
+        return aliases
+    for raw_line in text.replace("；", ";").replace("\n", ";").split(";"):
+        for chunk in raw_line.replace("，", ",").split(","):
+            item = chunk.strip()
+            if not item:
+                continue
+            for sep in ("=", ":", "："):
+                if sep in item:
+                    left, _, right = item.partition(sep)
+                    key = left.strip().lstrip("@")
+                    name = right.strip()
+                    if key and name:
+                        aliases[key] = name
+                    break
+    return aliases
+
+
 def parse_hhmm(value: Any) -> int | None:
     """``"23:30"`` -> ``1410``（当天第几分钟）。解析失败返回 None。"""
     text = as_str(value).strip()
@@ -227,6 +253,8 @@ class Settings:
     private_enabled: bool = True
     only_self_target: bool = True
     bot_nickname: str = "我"
+    bot_aliases: dict[str, str] = field(default_factory=dict)
+    """``{机器人ID: 名字}``，多机器人时给每个号一个名字（模板变量 ``{bot}``）。"""
     user_cooldown: float = 3.0
     dedupe_window_ms: int = 800
     quiet_enabled: bool = False
@@ -323,6 +351,7 @@ class Settings:
             private_enabled=as_bool(base.get("私聊启用"), True),
             only_self_target=as_bool(base.get("只响应戳机器人"), True),
             bot_nickname=as_str(base.get("机器人昵称"), "我") or "我",
+            bot_aliases=parse_bot_aliases(base.get("机器人别名")),
             user_cooldown=float(as_int(base.get("用户冷却秒数"), 3, 0, 3600)),
             dedupe_window_ms=as_int(base.get("去重窗口毫秒"), 800, 0, 10000),
             quiet_enabled=as_bool(base.get("安静时段开关"), False),
@@ -380,6 +409,13 @@ class Settings:
     # ------------------------------------------------------------------
     def profile_for(self, platform: str) -> PlatformProfile:
         return self.profiles.get(platform) or DEFAULT_PROFILES.get(platform) or FALLBACK_PROFILE
+
+    def bot_name(self, self_id: Any = "") -> str:
+        """当前这个号的显示名：先查别名表，再退回「机器人昵称」。"""
+        key = as_str(self_id).strip()
+        if key and key in self.bot_aliases:
+            return self.bot_aliases[key]
+        return self.bot_nickname
 
     def platform_allowed(self, platform: str) -> bool:
         if not self.platforms:

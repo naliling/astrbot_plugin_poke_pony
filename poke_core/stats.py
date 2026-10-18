@@ -54,10 +54,19 @@ def _to_int(value: Any) -> int:
 
 @dataclass
 class Bucket:
-    """一组计数（今日 / 累计）。"""
+    """一组计数（今日 / 累计）。
+
+    多机器人时，``bots`` 记「每个号分别被戳了多少次」，``scoped`` 记
+    「每个号下每个用户被戳了多少次」——排行榜仍按全体合并，但 ``{count}``
+    这类「这是你第几次戳我」的变量必须按号算，否则换个号戳一次就变成第 2 次。
+    """
 
     total: int = 0
     users: dict[str, UserStat] = field(default_factory=dict)
+    bots: dict[str, int] = field(default_factory=dict)
+    """``{bot_scope: 被戳次数}``。"""
+    scoped: dict[str, dict[str, int]] = field(default_factory=dict)
+    """``{bot_scope: {user_id: 被戳次数}}``。"""
 
     def get(self, user_id: str) -> UserStat:
         key = str(user_id or "")
@@ -67,8 +76,16 @@ class Bucket:
             self.users[key] = stat
         return stat
 
+    def get_scoped(self, scope: str, user_id: str) -> int:
+        return self.scoped.get(str(scope or ""), {}).get(str(user_id or ""), 0)
+
     def to_dict(self) -> dict:
-        return {"total": self.total, "users": {k: v.to_dict() for k, v in self.users.items()}}
+        return {
+            "total": self.total,
+            "users": {k: v.to_dict() for k, v in self.users.items()},
+            "bots": dict(self.bots),
+            "scoped": {k: dict(v) for k, v in self.scoped.items()},
+        }
 
     @classmethod
     def from_dict(cls, raw: Any) -> "Bucket":
@@ -79,7 +96,24 @@ class Bucket:
         if isinstance(users_raw, dict):
             for key, value in users_raw.items():
                 users[str(key)] = UserStat.from_dict(value)
-        return cls(total=_to_int(raw.get("total")), users=users)
+        bots: dict[str, int] = {}
+        bots_raw = raw.get("bots")
+        if isinstance(bots_raw, dict):
+            for key, value in bots_raw.items():
+                bots[str(key)] = _to_int(value)
+        scoped: dict[str, dict[str, int]] = {}
+        scoped_raw = raw.get("scoped")
+        if isinstance(scoped_raw, dict):
+            for scope, per_user in scoped_raw.items():
+                if not isinstance(per_user, dict):
+                    continue
+                scoped[str(scope)] = {str(k): _to_int(v) for k, v in per_user.items()}
+        return cls(
+            total=_to_int(raw.get("total")),
+            users=users,
+            bots=bots,
+            scoped=scoped,
+        )
 
 
 class StatsStore:
@@ -163,9 +197,14 @@ class StatsStore:
     # ------------------------------------------------------------------
     # 记录
     # ------------------------------------------------------------------
-    def record_incoming(self, user_id: str, name: str = "") -> int:
-        """记录一次「被戳」，返回该用户今日被戳次数。"""
+    def record_incoming(self, user_id: str, name: str = "", scope: str = "") -> int:
+        """记录一次「被戳」，返回**该机器人下**该用户今日被戳次数。
+
+        ``scope`` 是 ``platform:self_id``；为空时退化为全体合并计数。
+        """
         self._rollover_if_needed()
+        scope = str(scope or "")
+        user_key = str(user_id or "")
         stat = self.today.get(user_id)
         stat.poked += 1
         stat.name = name or stat.name
@@ -174,9 +213,18 @@ class StatsStore:
         all_stat.poked += 1
         all_stat.name = name or all_stat.name
         self.all_time.total += 1
+        count = stat.poked
+        if scope:
+            self.today.bots[scope] = self.today.bots.get(scope, 0) + 1
+            self.all_time.bots[scope] = self.all_time.bots.get(scope, 0) + 1
+            today_scoped = self.today.scoped.setdefault(scope, {})
+            today_scoped[user_key] = today_scoped.get(user_key, 0) + 1
+            all_scoped = self.all_time.scoped.setdefault(scope, {})
+            all_scoped[user_key] = all_scoped.get(user_key, 0) + 1
+            count = today_scoped[user_key]
         self._dirty = True
-        self._bump_streak(user_id)
-        return stat.poked
+        self._bump_streak(user_id, scope)
+        return count
 
     def record_outgoing(self, user_id: str, name: str = "") -> None:
         """记录一次「主动戳别人」。"""
@@ -192,8 +240,8 @@ class StatsStore:
     # ------------------------------------------------------------------
     # 连击
     # ------------------------------------------------------------------
-    def _bump_streak(self, user_id: str, window: float = 45.0) -> int:
-        key = str(user_id or "")
+    def _bump_streak(self, user_id: str, scope: str = "", window: float = 45.0) -> int:
+        key = self._streak_key(user_id, scope)
         now = time.monotonic()
         last = self._last_poke_at.get(key)
         if last is not None and now - last <= window:
@@ -203,8 +251,13 @@ class StatsStore:
         self._last_poke_at[key] = now
         return self._streak[key]
 
-    def streak(self, user_id: str) -> int:
-        return self._streak.get(str(user_id or ""), 1)
+    def streak(self, user_id: str, scope: str = "") -> int:
+        return self._streak.get(self._streak_key(user_id, scope), 1)
+
+    @staticmethod
+    def _streak_key(user_id: str, scope: str = "") -> str:
+        """连击按「机器人 + 用户」分别累计，避免 A 号戳一下、B 号戳一下被算成连击。"""
+        return f"{scope}|{user_id}" if scope else str(user_id or "")
 
     # ------------------------------------------------------------------
     # 查询
@@ -219,11 +272,13 @@ class StatsStore:
         rows.sort(key=lambda item: (-item[1], item[0]))
         return rows[: max(limit, 1)]
 
-    def summary(self) -> dict:
+    def summary(self, scope: str = "") -> dict:
         return {
             "today_total": self.today.total,
             "all_total": self.all_time.total,
             "today_users": len([s for s in self.today.users.values() if s.poked]),
+            "today_bot": self.today.bots.get(str(scope or ""), 0),
+            "all_bot": self.all_time.bots.get(str(scope or ""), 0),
             "history": self.history[-HISTORY_KEEP:],
         }
 

@@ -13,11 +13,13 @@
   回退模板；
 - **防骚扰**：同一用户 60 秒内被戳超过阈值就静默（可选怼一句），**不拉黑**；
 - **人形化联动**：只读 humanoid_core 导出的版本化契约，睡着时不吵、情绪带进提示词；
+- **多机器人**：同一个 AstrBot 挂多个号时，冷却 / 限流 / 防骚扰 / 连击 / 模板轮换
+  全部按号独立，协议端广播的「回声」自动忽略，`{bot}` 可按号配别名；
 - **数据看板**：今日/累计被戳次数、连击数、排行榜，KV 持久化；
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：娜莉灵 ｜ 版本：v1.91.80 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.81 ｜ 许可：MIT
 """
 
 from __future__ import annotations
@@ -69,7 +71,7 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "新.戳一戳"
-PLUGIN_VERSION = "v1.91.80"
+PLUGIN_VERSION = "v1.91.81"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 
@@ -112,8 +114,12 @@ class SuperPokePlugin(Star):
         self._combo_pool = TemplatePool(())
         self._harass_pool = TemplatePool(())
         self._pool_key: tuple | None = None
+        self._pool_spec: tuple[tuple, tuple, tuple, str] = ((), (), (), "权重随机")
+        self._pools: dict[str, tuple[TemplatePool, TemplatePool, TemplatePool]] = {}
         self._started_at = datetime.now()
-        self._llm_window: deque[float] = deque()
+        self._llm_windows: dict[str, deque[float]] = {}
+        self._known_bots: set[str] = set()
+        """本实例上见过的机器人 self_id（多机器人时用来识别「回声」事件）。"""
         self._humanoid: HumanoidBridge | None = None
         self._humanoid_key: tuple[bool, str] | None = None
 
@@ -130,7 +136,8 @@ class SuperPokePlugin(Star):
             f"回戳={'开' if settings.poke_back_enabled else '关'}，"
             f"LLM={'开' if settings.llm_enabled else '关'}，"
             f"防骚扰={'开' if settings.harass_enabled else '关'}，"
-            f"人形化联动={'开' if settings.humanoid_enabled else '关'}",
+            f"人形化联动={'开' if settings.humanoid_enabled else '关'}，"
+            f"多机器人别名 {len(settings.bot_aliases)} 个",
         )
 
     async def terminate(self) -> None:
@@ -173,6 +180,27 @@ class SuperPokePlugin(Star):
         settings: Settings,
     ) -> AsyncGenerator[Any, None]:
         """处理一次已经识别出来的戳一戳信号。"""
+        self_id = as_str(event.get_self_id())
+        if self_id:
+            self._known_bots.add(self_id)
+        # 多机器人隔离：冷却、限流、防骚扰、连击、模板轮换都按「哪个号」分开算
+        scope = self._bot_scope(event)
+        tag = self._tag(settings, self_id)
+
+        # 本实例的多个号会同时收到同一条戳一戳（协议端广播）。
+        # 目标如果是「另一只机器人」，说明这一份是回声，交给被戳的那个号自己回应，
+        # 否则三个号会各自回一句，看起来像复读机。
+        if (
+            signal.target_id
+            and self_id
+            and signal.target_id != self_id
+            and signal.target_id in self._known_bots
+        ):
+            self._logger.debug(
+                f"{tag} 目标 {signal.target_id} 是本实例的另一个号，交给它自己回应",
+            )
+            return
+
         if not self._pass_gate(settings, signal):
             return
 
@@ -190,41 +218,43 @@ class SuperPokePlugin(Star):
         ):
             # 这是最需要“看得见”的静默路径：否则使用者只会觉得戳了没反应。
             self._logger.info(
-                f"[{PLUGIN_NAME}] 人形化核心报告她正在睡觉，"
+                f"{tag} 人形化核心报告她正在睡觉，"
                 f"本次不回应 {signal.sender_name or signal.sender_id}"
                 f"（要睡着也回应：关掉「人形化联动 → 睡着时不回应」）",
             )
             return
 
-        # ---- 冷却 / 全局限流 ----
-        allowed, wait = self._limiter.check_user(signal.sender_id, settings.user_cooldown)
+        # ---- 冷却 / 每分钟上限（按号独立） ----
+        user_key = f"{scope}|{signal.sender_id}"
+        allowed, wait = self._limiter.check_user(user_key, settings.user_cooldown)
         if not allowed:
             self._logger.info(
-                f"[{PLUGIN_NAME}] 用户 {signal.sender_id} 冷却中，"
+                f"{tag} 用户 {signal.sender_id} 在本号冷却中，"
                 f"剩余 {wait:.1f}s，本次不回应",
             )
             return
-        if not self._limiter.check_global(settings.per_minute_limit):
-            self._logger.info(f"[{PLUGIN_NAME}] 触发全局每分钟上限，丢弃本次戳一戳")
+        if not self._limiter.check_global(settings.per_minute_limit, scope):
+            self._logger.info(
+                f"{tag} 本号触发每分钟上限 {settings.per_minute_limit} 次，丢弃本次戳一戳",
+            )
             return
 
-        self_id = as_str(event.get_self_id())
         proxy_target = bool(signal.target_id and self_id and signal.target_id != self_id)
 
-        # ---- 防骚扰：60 秒窗口内的连戳计数 ----
-        burst = self._burst.note(signal.sender_id) if settings.harass_enabled else 0
+        # ---- 防骚扰：60 秒窗口内的连戳计数（按号独立） ----
+        burst = self._burst.note(user_key) if settings.harass_enabled else 0
         if settings.harass_enabled and burst > settings.harass_threshold:
-            self._limiter.touch_global()
+            self._limiter.touch_global(scope)
             event.set_extra(HANDLED_FLAG, True)
             self._logger.info(
-                f"[{PLUGIN_NAME}] 用户 {signal.sender_name or signal.sender_id} "
+                f"{tag} 用户 {signal.sender_name or signal.sender_id} "
                 f"60 秒内第 {burst} 次戳，超过阈值 {settings.harass_threshold}，"
                 f"按「{settings.harass_action}」处理",
             )
             if settings.harass_should_reply():
-                template = self._pick_harass(settings)
+                template = self._pick_harass(settings, scope)
                 if template:
-                    context = self._build_context(settings, signal, burst, burst)
+                    context = self._build_context(settings, signal, burst, burst, self_id)
                     text = render_template(template, context)
                     yield event.chain_result(
                         self._build_speech_chain(settings, signal, text),
@@ -238,15 +268,19 @@ class SuperPokePlugin(Star):
             if proxy_target:
                 self._stats.record_outgoing(signal.target_id, signal.target_name)
             else:
-                count = self._stats.record_incoming(signal.sender_id, signal.sender_name)
-                streak = self._stats.streak(signal.sender_id)
+                count = self._stats.record_incoming(
+                    signal.sender_id,
+                    signal.sender_name,
+                    scope,
+                )
+                streak = self._stats.streak(signal.sender_id, scope)
             await self._stats.save_if_due()
 
-        self._limiter.touch_user(signal.sender_id)
-        self._limiter.touch_global()
+        self._limiter.touch_user(user_key)
+        self._limiter.touch_global(scope)
         event.set_extra(HANDLED_FLAG, True)
 
-        context = self._build_context(settings, signal, count, streak)
+        context = self._build_context(settings, signal, count, streak, self_id)
 
         # ---- 发言 ----
         if not proxy_target:
@@ -258,12 +292,20 @@ class SuperPokePlugin(Star):
                 speech = False
 
             if speech:
-                text = await self._compose_speech(event, settings, signal, count, streak, humanoid)
+                text = await self._compose_speech(
+                    event,
+                    settings,
+                    signal,
+                    count,
+                    streak,
+                    humanoid,
+                    scope,
+                )
                 if text:
                     chain = self._build_speech_chain(settings, signal, text)
                     self._logger.info(
-                        f"[{PLUGIN_NAME}] 回应 {signal.sender_name or signal.sender_id}"
-                        f"（第 {count} 次，连击 {streak}）：{text}",
+                        f"{tag} 回应 {signal.sender_name or signal.sender_id}"
+                        f"（本号第 {count} 次，连击 {streak}）：{text}",
                     )
                     yield event.chain_result(chain)
         else:
@@ -284,11 +326,11 @@ class SuperPokePlugin(Star):
         )
         if outcome.ok:
             self._logger.info(
-                f"[{PLUGIN_NAME}] 回戳 {target_name or target_id} 成功（{outcome.message}）",
+                f"{tag} 回戳 {target_name or target_id} 成功（{outcome.message}）",
             )
         else:
             self._logger.debug(
-                f"[{PLUGIN_NAME}] 回戳 {target_name or target_id} 未执行（{outcome.message}）",
+                f"{tag} 回戳 {target_name or target_id} 未执行（{outcome.message}）",
             )
 
     # ------------------------------------------------------------------
@@ -302,29 +344,45 @@ class SuperPokePlugin(Star):
         count: int,
         streak: int,
         humanoid: HumanoidSnapshot | None,
+        scope: str = "",
     ) -> str | None:
         if (
             settings.llm_enabled
-            and self._llm_quota_ok(settings)
+            and self._llm_quota_ok(settings, scope)
             and self._decide(True, settings.llm_probability)
         ):
             text = await self._llm_speech(event, settings, signal, count, streak, humanoid)
             if text:
-                self._llm_window.append(asyncio.get_running_loop().time())
+                self._llm_window(scope).append(asyncio.get_running_loop().time())
                 return text
-        template = self._pick_speech(settings, streak)
+        template = self._pick_speech(settings, streak, scope)
         if not template:
             return None
-        context = self._build_context(settings, signal, count, streak)
+        context = self._build_context(
+            settings,
+            signal,
+            count,
+            streak,
+            as_str(event.get_self_id()),
+        )
         return render_template(template, context)
 
-    def _llm_quota_ok(self, settings: Settings) -> bool:
+    def _llm_window(self, scope: str = "") -> deque[float]:
+        """每个号各自一份 LLM 每分钟配额，免得一个号把额度用光。"""
+        window = self._llm_windows.get(scope)
+        if window is None:
+            window = deque()
+            self._llm_windows[scope] = window
+        return window
+
+    def _llm_quota_ok(self, settings: Settings, scope: str = "") -> bool:
         if settings.llm_per_minute <= 0:
             return False
         now = asyncio.get_running_loop().time()
-        while self._llm_window and now - self._llm_window[0] > 60.0:
-            self._llm_window.popleft()
-        return len(self._llm_window) < settings.llm_per_minute
+        window = self._llm_window(scope)
+        while window and now - window[0] > 60.0:
+            window.popleft()
+        return len(window) < settings.llm_per_minute
 
     async def _llm_speech(
         self,
@@ -408,12 +466,12 @@ class SuperPokePlugin(Star):
             )
 
         allowed, wait = self._limiter.check_user(
-            f"cmd:{event.get_sender_id()}",
+            f"{self._bot_scope(event)}|cmd:{event.get_sender_id()}",
             settings.active_poke_cooldown,
         )
         if not allowed:
             return f"别急，{wait:.1f} 秒后再戳。"
-        self._limiter.touch_user(f"cmd:{event.get_sender_id()}")
+        self._limiter.touch_user(f"{self._bot_scope(event)}|cmd:{event.get_sender_id()}")
 
         if settings.stats_enabled:
             await self._stats.load()
@@ -446,14 +504,17 @@ class SuperPokePlugin(Star):
         if settings.stats_enabled:
             await self._stats.load()
         platform = as_str(event.get_platform_name()) or "unknown"
+        self_id = as_str(event.get_self_id())
         profile = settings.profile_for(platform)
-        summary = self._stats.summary()
+        summary = self._stats.summary(self._bot_scope(event))
         uptime = datetime.now() - self._started_at
         hours, remainder = divmod(int(uptime.total_seconds()), 3600)
         minutes = remainder // 60
 
         lines = [
             f"🫵 {PLUGIN_NAME} {PLUGIN_VERSION} · 运行状态",
+            f"机器人：{settings.bot_name(self_id)}"
+            f"（{self_id or '未知'}）",
             f"平台：{platform}（原生戳：{'✅' if profile.native_poke else '❌ 拟真模式'}）",
             f"总开关：{'✅' if settings.enabled else '❌'}　"
             f"回戳：{'✅' if settings.poke_back_enabled else '❌'}　"
@@ -464,7 +525,7 @@ class SuperPokePlugin(Star):
             f"回戳次数：{settings.poke_back_times}　冷却：{settings.user_cooldown:.0f}s　"
             f"限流：{settings.per_minute_limit}/分钟",
             f"今日被戳：{summary['today_total']} 次（{summary['today_users']} 人）",
-            f"累计被戳：{summary['all_total']} 次",
+            f"本号今日：{summary['today_bot']} 次　累计：{summary['all_total']} 次",
             f"已运行：{hours} 小时 {minutes} 分钟",
         ]
 
@@ -560,10 +621,31 @@ class SuperPokePlugin(Star):
         )
         if key == self._pool_key:
             return
+        self._pool_key = key
+        self._pool_spec = (
+            settings.speech_pool,
+            settings.combo_pool,
+            settings.harass_pool,
+            settings.speech_mode,
+        )
+        # 配置变了：所有号的轮换 / 洗牌袋状态一起重置
+        self._pools = {}
         self._speech_pool = TemplatePool(settings.speech_pool, settings.speech_mode)
         self._combo_pool = TemplatePool(settings.combo_pool, settings.speech_mode)
         self._harass_pool = TemplatePool(settings.harass_pool, settings.speech_mode)
-        self._pool_key = key
+
+    def _pools_for(self, scope: str) -> tuple[TemplatePool, TemplatePool, TemplatePool]:
+        """每个号各自一套模板池：轮换 / 洗牌袋状态互不干扰。"""
+        pools = self._pools.get(scope)
+        if pools is None:
+            speech, combo, harass, mode = self._pool_spec
+            pools = (
+                TemplatePool(speech, mode),
+                TemplatePool(combo, mode),
+                TemplatePool(harass, mode),
+            )
+            self._pools[scope] = pools
+        return pools
 
     def _humanoid_bridge(self, settings: Settings) -> HumanoidBridge:
         key = (settings.humanoid_enabled, settings.humanoid_state_path)
@@ -652,6 +734,7 @@ class SuperPokePlugin(Star):
         signal: PokeSignal,
         count: int,
         streak: int,
+        self_id: str = "",
     ) -> dict[str, str]:
         now = datetime.now()
         return {
@@ -659,7 +742,8 @@ class SuperPokePlugin(Star):
             "sender_id": signal.sender_id,
             "target": signal.target_name or signal.target_id,
             "target_id": signal.target_id,
-            "bot": settings.bot_nickname,
+            "bot": settings.bot_name(self_id),
+            "bot_id": self_id,
             "group": signal.group_id,
             "count": str(count),
             "streak": str(streak),
@@ -668,29 +752,49 @@ class SuperPokePlugin(Star):
             "platform": signal.platform,
         }
 
-    def _pick_speech(self, settings: Settings, streak: int) -> str | None:
+    def _pick_speech(self, settings: Settings, streak: int, scope: str = "") -> str | None:
+        speech_pool, combo_pool, _ = self._pools_for(scope)
         use_combo = (
             settings.combo_threshold > 0
             and streak >= settings.combo_threshold
-            and bool(self._combo_pool)
+            and bool(combo_pool)
         )
-        pool = self._combo_pool if use_combo else self._speech_pool
+        pool = combo_pool if use_combo else speech_pool
         return pool.pick(self._rng)
 
-    def _pick_harass(self, settings: Settings) -> str | None:
-        """防骚扰触发时取一条「怼人」文案；配了冷却就按冷却来。"""
-        if not settings.harass_pool:
+    def _pick_harass(self, settings: Settings, scope: str = "") -> str | None:
+        """防骚扰触发时取一条「怼人」文案；配了冷却就按冷却来（按号独立）。"""
+        _, _, harass_pool = self._pools_for(scope)
+        if not harass_pool:
             return None
         allowed, _ = self._limiter.check_user(
-            f"harass:{id(self)}",
+            f"{scope}|harass",
             settings.harass_cooldown,
         )
         if not allowed:
             return None
-        text = self._harass_pool.pick(self._rng)
+        text = harass_pool.pick(self._rng)
         if text:
-            self._limiter.touch_user(f"harass:{id(self)}")
+            self._limiter.touch_user(f"{scope}|harass")
         return text
+
+    # ------------------------------------------------------------------
+    # 多机器人
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _bot_scope(event: AstrMessageEvent) -> str:
+        """多机器人隔离用的作用域：``platform:self_id``。"""
+        platform = as_str(event.get_platform_name()).lower() or "unknown"
+        self_id = as_str(event.get_self_id()) or "unknown"
+        return f"{platform}:{self_id}"
+
+    @staticmethod
+    def _tag(settings: Settings, self_id: str) -> str:
+        """日志前缀：配了「机器人别名」时带上号名，单机器人时保持原样。"""
+        label = settings.bot_aliases.get(self_id, "") if self_id else ""
+        if not label:
+            return f"[{PLUGIN_NAME}]"
+        return f"[{PLUGIN_NAME}·{label}]"
 
     def _build_speech_chain(
         self,

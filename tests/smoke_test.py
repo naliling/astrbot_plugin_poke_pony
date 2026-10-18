@@ -580,6 +580,60 @@ async def case_empty_templates() -> None:
     check("仍然原生回戳", any(c[0] == "group_poke" for c in bot.calls), str(bot.calls))
 
 
+async def case_multi_bot() -> None:
+    print("\n[16] 多机器人：冷却 / 连击 / 统计 / 回声互不干扰")
+    config = base_config(
+        **{
+            "基础设置": {
+                "用户冷却秒数": 60,
+                "机器人昵称": "我",
+                "机器人别名": "99999=娜莉灵,88888=露娜",
+            },
+            "发言设置": {"发言模板": [speech_item("{bot}：第 {count} 次")]},
+        }
+    )
+    plugin = make_plugin(config)
+    check("别名表解析正确", plugin._settings().bot_name("88888") == "露娜")
+    check("没配别名的号退回昵称", plugin._settings().bot_name("77777") == "我")
+
+    a1 = await run_handler(plugin, build_event(components=[Poke(id="99999")], self_id="99999"))
+    check("A 号首次回应", bool(a1), str(len(a1)))
+    check("A 号用别名渲染 {bot}", "娜莉灵" in chain_text(a1), chain_text(a1))
+    check("A 号 {count} 从 1 开始", "第 1 次" in chain_text(a1), chain_text(a1))
+
+    a2 = await run_handler(plugin, build_event(components=[Poke(id="99999")], self_id="99999"))
+    check("A 号冷却期内静默", a2 == [], str(len(a2)))
+
+    b1 = await run_handler(plugin, build_event(components=[Poke(id="88888")], self_id="88888"))
+    check("A 号冷却不挡 B 号", bool(b1), str(len(b1)))
+    check("B 号用自己的别名", "露娜" in chain_text(b1), chain_text(b1))
+    check("B 号的 {count} 也是第 1 次", "第 1 次" in chain_text(b1), chain_text(b1))
+
+    scoped = plugin._stats.today.bots
+    check(
+        "统计按号分开计数",
+        scoped.get("aiocqhttp:99999") == 1 and scoped.get("aiocqhttp:88888") == 1,
+        str(scoped),
+    )
+
+    # 回声：协议端把「戳 A 号」广播到 B 号，B 号不该跟着再回一遍
+    echo_plugin = make_plugin(
+        base_config(**{"基础设置": {"用户冷却秒数": 0, "只响应戳机器人": False}}),
+    )
+    await run_handler(echo_plugin, build_event(components=[Poke(id="99999")], self_id="99999"))
+    echo_bot = FakeBot()
+    echo = await run_handler(
+        echo_plugin,
+        build_event(components=[Poke(id="99999")], self_id="88888", bot=echo_bot),
+    )
+    check("B 号收到「戳 A 号」的回声不回", echo == [], str(len(echo)))
+    check("回声也不会触发 B 号回戳", echo_bot.calls == [], str(echo_bot.calls))
+
+    # 同一个号被戳才回
+    hit = await run_handler(echo_plugin, build_event(components=[Poke(id="88888")], self_id="88888"))
+    check("B 号被戳自己会回", bool(hit), str(len(hit)))
+
+
 async def main() -> int:
     print("=" * 68)
     print("新.戳一戳 冒烟测试（真实 AstrBot 运行时）")
@@ -599,6 +653,7 @@ async def main() -> int:
     await case_humanoid_asleep()
     await case_custom_platform()
     await case_empty_templates()
+    await case_multi_bot()
     print("\n" + "=" * 68)
     print(f"通过 {len(PASSED)} 项，失败 {len(FAILED)} 项")
     for item in FAILED:

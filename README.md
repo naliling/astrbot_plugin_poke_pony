@@ -8,7 +8,7 @@
 > 真正自定义 —— 台词、触发词、平台、阈值全你说了算，插件一句台词都不预设；
 > 配置少不操心 —— 装上只填两处就能跑，其余默认值已经调好。
 
-![version](https://img.shields.io/badge/version-v1.91.80-ff69b4)
+![version](https://img.shields.io/badge/version-v1.91.81-ff69b4)
 ![platform](https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Lark%20%7C%20WeCom%20%7C%20WeChat-2ea44f)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![license](https://img.shields.io/badge/license-MIT-blue)
@@ -115,9 +115,21 @@ Poke 消息段（实验开关）
 
 装了 [humanoid_core](https://github.com/naliling/humanoid_core_plugin) 时，只读它导出的**版本化契约**（`contract` v1，字段只加不改）：她睡着时不回应；体感 / 体力 / 正在做什么 / 对你的好感度会带进 LLM 提示词。没装、关掉、路径不对 —— 静默跳过，不影响任何功能。
 
+### 🎭 多机器人（一个 AstrBot 挂好几个号）
+
+同一个 AstrBot 上挂了多个号时，**每个号各算各的**：
+
+- 用户冷却、每分钟上限、防骚扰计数、连击、`{count}` 全部按号独立 ——
+  戳完 A 号马上戳 B 号，B 号照样会回，不会被 A 号的冷却挡住；
+- 协议端把「戳 A 号」广播给 B 号时，B 号认得这是回声，**不会跟着再回一遍**；
+- 在「基础设置 → 机器人别名」里按 `号=名字` 填一行，例如
+  `3632823490=娜莉灵,2625379556=露娜`：`{bot}` 变量、日志前缀、`/戳状态`
+  都会显示对应名字，多个号混在一个日志文件里也一眼分得清。
+
 ### 📊 数据看板
 
 今日 / 累计被戳次数、活跃人数、`/戳榜` 排行榜，KV 持久化 + 节流落盘，不产生额外文件。
+`/戳状态` 会额外显示**本号**今日被戳次数（多机器人时比总数更有参考价值）。
 
 ### ⌨️ 指令
 

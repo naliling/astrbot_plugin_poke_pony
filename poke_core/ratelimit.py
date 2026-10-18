@@ -5,7 +5,11 @@
 1. **去重窗口**：同一条事件可能同时带 ``Poke`` 消息段和通知事件，只在主流程判一次；
 2. **用户冷却**：同一用户 N 秒内只响应一次；
 3. **防骚扰阈值**：同一用户 60 秒内被戳超过 N 次 → 静默（或按配置怼一句），不拉黑；
-4. **全局每分钟上限**：所有用户合计每分钟最多响应 M 次，超出直接静默丢弃。
+4. **每分钟上限**：**每个机器人各自**每分钟最多响应 M 次，超出直接静默丢弃。
+
+多机器人（同一个 AstrBot 上挂了多个号）时，所有计数都按「机器人」分开：
+``scope`` 就是 ``platform:self_id``。否则会出现「戳了 A 号，再戳 B 号被 A 号的
+冷却挡住」这种莫名其妙的静默。
 
 全部是纯内存实现，重启即清空——限流数据本来就不该持久化。
 """
@@ -22,14 +26,17 @@ class RateLimiter:
     def __init__(self, clock=time.monotonic) -> None:
         self._clock = clock
         self._last_seen: dict[str, float] = {}
-        self._window: deque[float] = deque()
+        self._windows: dict[str, deque[float]] = {}
         self._last_purge = 0.0
 
     # ------------------------------------------------------------------
     # 用户冷却
     # ------------------------------------------------------------------
     def check_user(self, user_id: str, cooldown: float) -> tuple[bool, float]:
-        """返回 ``(是否放行, 还需等待秒数)``。"""
+        """返回 ``(是否放行, 还需等待秒数)``。
+
+        调用方负责把「机器人 + 用户」拼成 key，这样 A 号的冷却不会挡住 B 号。
+        """
         key = str(user_id or "")
         if not key or cooldown <= 0:
             return True, 0.0
@@ -52,21 +59,28 @@ class RateLimiter:
     # ------------------------------------------------------------------
     # 全局限流
     # ------------------------------------------------------------------
-    def check_global(self, per_minute: int) -> bool:
+    def check_global(self, per_minute: int, scope: str = "") -> bool:
+        """``scope`` 为空时退化为「所有机器人共用一份额度」。"""
         if per_minute <= 0:
             return True
         now = self._clock()
-        self._trim(now)
-        return len(self._window) < per_minute
+        window = self._windows.get(scope)
+        if window is None:
+            return True
+        self._trim(now, scope)
+        return len(window) < per_minute
 
-    def touch_global(self) -> None:
+    def touch_global(self, scope: str = "") -> None:
         now = self._clock()
-        self._window.append(now)
-        self._trim(now)
+        self._windows.setdefault(scope, deque()).append(now)
+        self._trim(now, scope)
 
-    def _trim(self, now: float) -> None:
-        while self._window and now - self._window[0] > 60.0:
-            self._window.popleft()
+    def _trim(self, now: float, scope: str = "") -> None:
+        window = self._windows.get(scope)
+        if window is None:
+            return
+        while window and now - window[0] > 60.0:
+            window.popleft()
 
     # ------------------------------------------------------------------
     # 维护
@@ -80,10 +94,14 @@ class RateLimiter:
         expired = [key for key, ts in self._last_seen.items() if now - ts > ttl]
         for key in expired:
             self._last_seen.pop(key, None)
-        self._trim(now)
+        for scope in list(self._windows):
+            self._trim(now, scope)
 
     def stats(self) -> dict[str, int]:
-        return {"users": len(self._last_seen), "window": len(self._window)}
+        return {
+            "users": len(self._last_seen),
+            "window": sum(len(window) for window in self._windows.values()),
+        }
 
 
 class BurstTracker:
