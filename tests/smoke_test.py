@@ -616,6 +616,19 @@ async def case_multi_bot() -> None:
         str(scoped),
     )
 
+    # 排行榜按号独立：同一个号被戳两次、另一个号被戳一次，各自只看到自己的
+    rank_plugin = make_plugin(base_config(**{"基础设置": {"用户冷却秒数": 0}}))
+    await run_handler(rank_plugin, build_event(components=[Poke(id="99999")], self_id="99999"))
+    await run_handler(rank_plugin, build_event(components=[Poke(id="99999")], self_id="99999"))
+    await run_handler(rank_plugin, build_event(components=[Poke(id="88888")], self_id="88888"))
+    rank_a = rank_plugin._stats.ranking(10, scope="aiocqhttp:99999")
+    rank_b = rank_plugin._stats.ranking(10, scope="aiocqhttp:88888")
+    check(
+        "排行榜按号独立",
+        rank_a[0][1] == 2 and rank_b[0][1] == 1,
+        f"{rank_a} / {rank_b}",
+    )
+
     # 回声：协议端把「戳 A 号」广播到 B 号，B 号不该跟着再回一遍
     echo_plugin = make_plugin(
         base_config(**{"基础设置": {"用户冷却秒数": 0, "只响应戳机器人": False}}),

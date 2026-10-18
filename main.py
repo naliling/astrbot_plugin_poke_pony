@@ -19,7 +19,7 @@
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：娜莉灵 ｜ 版本：v1.91.81 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.82 ｜ 许可：MIT
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "新.戳一戳"
-PLUGIN_VERSION = "v1.91.81"
+PLUGIN_VERSION = "v1.91.82"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 
@@ -524,8 +524,10 @@ class SuperPokePlugin(Star):
             f"防骚扰：{'✅ ' + str(settings.harass_threshold) + '/分' if settings.harass_enabled else '❌'}",
             f"回戳次数：{settings.poke_back_times}　冷却：{settings.user_cooldown:.0f}s　"
             f"限流：{settings.per_minute_limit}/分钟",
-            f"今日被戳：{summary['today_total']} 次（{summary['today_users']} 人）",
-            f"本号今日：{summary['today_bot']} 次　累计：{summary['all_total']} 次",
+            f"本号今日被戳：{summary['today_bot']} 次"
+            f"（全号合计 {summary['today_total']} 次 / {summary['today_users']} 人）",
+            f"本号累计被戳：{summary['all_bot']} 次"
+            f"（全号合计 {summary['all_total']} 次）",
             f"已运行：{hours} 小时 {minutes} 分钟",
         ]
 
@@ -547,21 +549,26 @@ class SuperPokePlugin(Star):
     # ------------------------------------------------------------------
     @filter.command("戳榜", alias={"戳排行", "戳排名"})
     async def poke_ranking(self, event: AstrMessageEvent) -> AsyncGenerator[Any, None]:
-        """查看今日被戳排行榜。"""
+        """查看今日被戳排行榜（按号独立统计）。"""
         settings = self._settings()
         if settings.stats_enabled:
             await self._stats.load()
-        rows = self._stats.ranking(settings.ranking_size)
+        scope = self._bot_scope(event)
+        self_id = as_str(event.get_self_id())
+        rows = self._stats.ranking(settings.ranking_size, scope=scope)
+        summary = self._stats.summary(scope)
         if not rows:
-            yield event.plain_result("今天还没人戳我，榜上空空如也 🕳️")
+            yield event.plain_result(
+                f"今天还没人戳「{settings.bot_name(self_id)}」，榜上空空如也 🕳️",
+            )
             event.stop_event()
             return
         medals = ["🥇", "🥈", "🥉"]
-        lines = ["🫵 今日被戳排行榜"]
+        lines = [f"🫵 {settings.bot_name(self_id)} · 今日被戳排行榜"]
         for index, (user_id, count, name) in enumerate(rows):
             badge = medals[index] if index < len(medals) else f"{index + 1}."
             lines.append(f"{badge} {name or user_id} —— {count} 次")
-        lines.append(f"合计 {self._stats.today.total} 次")
+        lines.append(f"本号合计 {summary['today_bot']} 次")
         yield event.plain_result("\n".join(lines))
         event.stop_event()
 

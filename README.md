@@ -8,7 +8,7 @@
 > 真正自定义 —— 台词、触发词、平台、阈值全你说了算，插件一句台词都不预设；
 > 配置少不操心 —— 装上只填两处就能跑，其余默认值已经调好。
 
-![version](https://img.shields.io/badge/version-v1.91.81-ff69b4)
+![version](https://img.shields.io/badge/version-v1.91.82-ff69b4)
 ![platform](https://img.shields.io/badge/platform-QQ%20%7C%20Telegram%20%7C%20Lark%20%7C%20WeCom%20%7C%20WeChat-2ea44f)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab)
 ![license](https://img.shields.io/badge/license-MIT-blue)
@@ -129,7 +129,8 @@ Poke 消息段（实验开关）
 ### 📊 数据看板
 
 今日 / 累计被戳次数、活跃人数、`/戳榜` 排行榜，KV 持久化 + 节流落盘，不产生额外文件。
-`/戳状态` 会额外显示**本号**今日被戳次数（多机器人时比总数更有参考价值）。
+**多机器人时统计按号独立**：`/戳状态` 与 `/戳榜` 看到的都是「这个号」自己的数据
+（括号里附带全号合计做参考）。
 
 ### ⌨️ 指令
 

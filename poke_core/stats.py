@@ -266,9 +266,28 @@ class StatsStore:
         stat = self.today.users.get(str(user_id or ""))
         return stat.poked if stat else 0
 
-    def ranking(self, limit: int = 10, bucket: str = "today") -> list[tuple[str, int, str]]:
+    def ranking(
+        self,
+        limit: int = 10,
+        bucket: str = "today",
+        scope: str = "",
+    ) -> list[tuple[str, int, str]]:
+        """排行榜。``scope`` 非空时只统计「这个号」被戳的次数。"""
         source = self.today if bucket == "today" else self.all_time
-        rows = [(uid, stat.poked, stat.name) for uid, stat in source.users.items() if stat.poked > 0]
+        scope = str(scope or "")
+        if scope:
+            counts = source.scoped.get(scope, {})
+            rows = [
+                (uid, int(count), (source.users.get(uid).name if source.users.get(uid) else ""))
+                for uid, count in counts.items()
+                if int(count) > 0
+            ]
+        else:
+            rows = [
+                (uid, stat.poked, stat.name)
+                for uid, stat in source.users.items()
+                if stat.poked > 0
+            ]
         rows.sort(key=lambda item: (-item[1], item[0]))
         return rows[: max(limit, 1)]
 
