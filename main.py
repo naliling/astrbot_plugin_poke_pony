@@ -19,7 +19,7 @@
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：娜莉灵 ｜ 版本：v1.91.83 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.84 ｜ 许可：MIT
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "新.戳一戳"
-PLUGIN_VERSION = "v1.91.83"
+PLUGIN_VERSION = "v1.91.84"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 

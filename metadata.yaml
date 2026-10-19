@@ -7,8 +7,18 @@ desc: >-
   微信个人号等无原生戳能力的平台用触发词模拟，还能用「自定义平台」接任意新适配器；
   三级回戳降级、可选 LLM 现场生成台词、按分钟阈值自动静默（可怼一句）的防骚扰、
   冷却限流、黑白名单、安静时段、统计排行榜，并可只读联动 humanoid_core 契约——她睡着时不吵。
+  适配 AstrBot 4.13 及以上版本。
 short_desc: 真正自定义 / 配置少不操心 / 全平台戳一戳（原生回戳 + 拟真降级 + LLM 台词 + 防骚扰）
-version: v1.91.83
+# 中文标签：随插件一起声明，供插件市场 / 后续支持 tags 的面板读取。
+# 注意：AstrBot 4.28.2 的插件信息接口不读本字段（StarMetadata 无 tags），
+# 面板「标签」一行只会显示插件市场条目里的标签。
+tags:
+  - 戳一戳
+  - 互动娱乐
+  - 防骚扰
+  - 多机器人
+  - 人形化联动
+version: v1.91.84
 author: 娜莉灵
 repo: https://github.com/naliling/astrbot_plugin_poke_pony
 astrbot_version: ">=4.13.0"
