@@ -8,7 +8,7 @@ desc: >-
   三级回戳降级、可选 LLM 现场生成台词、按分钟阈值自动静默（可怼一句）的防骚扰、
   冷却限流、黑白名单、安静时段、统计排行榜，并可只读联动 humanoid_core 契约——她睡着时不吵。
 short_desc: 真正自定义 / 配置少不操心 / 全平台戳一戳（原生回戳 + 拟真降级 + LLM 台词 + 防骚扰）
-version: v1.91.82
+version: v1.91.83
 author: 娜莉灵
 repo: https://github.com/naliling/astrbot_plugin_poke_pony
 astrbot_version: ">=4.13.0"

@@ -296,6 +296,8 @@ class Settings:
     harass_pool: tuple[dict, ...] = ()
     harass_cooldown: float = 60.0
     per_minute_limit: int = 30
+    group_per_minute_limit: int = 10
+    """每个群各自每分钟最多回应几次；0 = 不限制。"""
 
     # ---- 指令 ----
     triggers: tuple[str, ...] = DEFAULT_TRIGGERS
@@ -385,6 +387,7 @@ class Settings:
             harass_pool=_normalize_pool(harass.get("怼人模板")),
             harass_cooldown=float(as_int(harass.get("怼人冷却秒数"), 60, 0, 3600)),
             per_minute_limit=as_int(harass.get("全局每分钟上限"), 30, 0, 600),
+            group_per_minute_limit=as_int(harass.get("群聊每分钟上限"), 10, 0, 600),
             triggers=as_str_list(cmd.get("触发词")) or DEFAULT_TRIGGERS,
             text_trigger_platforms=as_str_list(cmd.get("文本触发平台"))
             or DEFAULT_TEXT_TRIGGER_PLATFORMS,

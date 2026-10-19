@@ -19,7 +19,7 @@
 - **指令与工具**：``/戳``、``/戳状态``、``/戳榜``、``/戳帮助``，以及可选的
   LLM 函数工具 ``poke_user``。
 
-作者：娜莉灵 ｜ 版本：v1.91.82 ｜ 许可：MIT
+作者：娜莉灵 ｜ 版本：v1.91.83 ｜ 许可：MIT
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "新.戳一戳"
-PLUGIN_VERSION = "v1.91.82"
+PLUGIN_VERSION = "v1.91.83"
 SEEN_FLAG = "_superpoke_seen"
 HANDLED_FLAG = "_superpoke_handled"
 
@@ -186,6 +186,12 @@ class SuperPokePlugin(Star):
         # 多机器人隔离：冷却、限流、防骚扰、连击、模板轮换都按「哪个号」分开算
         scope = self._bot_scope(event)
         tag = self._tag(settings, self_id)
+        # 群聊防护用的作用域：每个群各自一份每分钟额度
+        group_scope = (
+            f"{scope}|group:{signal.group_id}"
+            if signal.is_group and settings.group_per_minute_limit > 0
+            else ""
+        )
 
         # 本实例的多个号会同时收到同一条戳一戳（协议端广播）。
         # 目标如果是「另一只机器人」，说明这一份是回声，交给被戳的那个号自己回应，
@@ -224,27 +230,16 @@ class SuperPokePlugin(Star):
             )
             return
 
-        # ---- 冷却 / 每分钟上限（按号独立） ----
+        # ---- 防骚扰：先计数并判定，再看冷却 ----
+        # 顺序很关键：每次戳都要计数，且超过阈值必须**先于冷却**处理。
+        # 否则冷却把中间的戳全挡掉，计数永远攒不满，怼人就永远不触发。
         user_key = f"{scope}|{signal.sender_id}"
-        allowed, wait = self._limiter.check_user(user_key, settings.user_cooldown)
-        if not allowed:
-            self._logger.info(
-                f"{tag} 用户 {signal.sender_id} 在本号冷却中，"
-                f"剩余 {wait:.1f}s，本次不回应",
-            )
-            return
-        if not self._limiter.check_global(settings.per_minute_limit, scope):
-            self._logger.info(
-                f"{tag} 本号触发每分钟上限 {settings.per_minute_limit} 次，丢弃本次戳一戳",
-            )
-            return
-
-        proxy_target = bool(signal.target_id and self_id and signal.target_id != self_id)
-
-        # ---- 防骚扰：60 秒窗口内的连戳计数（按号独立） ----
         burst = self._burst.note(user_key) if settings.harass_enabled else 0
+
         if settings.harass_enabled and burst > settings.harass_threshold:
             self._limiter.touch_global(scope)
+            if group_scope:
+                self._limiter.touch_global(group_scope)
             event.set_extra(HANDLED_FLAG, True)
             self._logger.info(
                 f"{tag} 用户 {signal.sender_name or signal.sender_id} "
@@ -256,10 +251,47 @@ class SuperPokePlugin(Star):
                 if template:
                     context = self._build_context(settings, signal, burst, burst, self_id)
                     text = render_template(template, context)
+                    self._logger.info(f"{tag} 怼人：{text}")
                     yield event.chain_result(
                         self._build_speech_chain(settings, signal, text),
                     )
+                else:
+                    reason = "怼人模板为空" if not settings.harass_pool else "怼人冷却中"
+                    self._logger.info(
+                        f"{tag} 按「{settings.harass_action}」要怼人，但{reason}，"
+                        f"本次只静默",
+                    )
+            if settings.harass_should_silent():
+                return
+            # 「只怼人」：怼完继续走正常回应（还要过下面的冷却 / 限流）
+
+        # ---- 冷却 / 每分钟上限（按号独立） ----
+        allowed, wait = self._limiter.check_user(user_key, settings.user_cooldown)
+        if not allowed:
+            self._logger.info(
+                f"{tag} 用户 {signal.sender_id} 在本号冷却中，"
+                f"剩余 {wait:.1f}s，本次不回应"
+                f"（已连戳 {burst} 次，阈值 {settings.harass_threshold}）",
+            )
             return
+        if not self._limiter.check_global(settings.per_minute_limit, scope):
+            self._logger.info(
+                f"{tag} 本号触发每分钟上限 {settings.per_minute_limit} 次，丢弃本次戳一戳",
+            )
+            return
+
+        # ---- 群聊防护：每个群各自一份每分钟额度 ----
+        if group_scope and not self._limiter.check_global(
+            settings.group_per_minute_limit,
+            group_scope,
+        ):
+            self._logger.info(
+                f"{tag} 群 {signal.group_id} 触发群聊每分钟上限 "
+                f"{settings.group_per_minute_limit} 次，本次不回应",
+            )
+            return
+
+        proxy_target = bool(signal.target_id and self_id and signal.target_id != self_id)
 
         # ---- 统计 ----
         count = 1
@@ -278,6 +310,8 @@ class SuperPokePlugin(Star):
 
         self._limiter.touch_user(user_key)
         self._limiter.touch_global(scope)
+        if group_scope:
+            self._limiter.touch_global(group_scope)
         event.set_extra(HANDLED_FLAG, True)
 
         context = self._build_context(settings, signal, count, streak, self_id)

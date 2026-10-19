@@ -462,6 +462,91 @@ async def case_harass_reply() -> None:
     check("怼人文案渲染了变量", "4 次了" in text, text)
 
 
+async def case_harass_reply_only() -> None:
+    print("\n[17] 防骚扰：只怼人（怼完照常回应）")
+    plugin = make_plugin(
+        base_config(
+            **{
+                "防骚扰": {
+                    "防骚扰开关": True,
+                    "每分钟阈值": 2,
+                    "触发动作": "只怼人",
+                    "怼人模板": [harass_item("别戳了，{count} 次了")],
+                    "怼人冷却秒数": 0,
+                }
+            }
+        ),
+    )
+    out = []
+    for _ in range(3):
+        out.append(await run_handler(plugin, build_event(components=[Poke(id="99999")])))
+    text = chain_text(out[2])
+    check("第 3 次触发怼人", "别戳了" in text and "3 次了" in text, text)
+    check("只怼人仍照常发言", "呜" in text, text)
+
+
+async def case_harass_counts_through_cooldown() -> None:
+    print("\n[18] 防骚扰：冷却期内的戳也计数")
+    bot = FakeBot()
+    plugin = make_plugin(
+        base_config(
+            **{
+                "基础设置": {"用户冷却秒数": 60},
+                "防骚扰": {
+                    "防骚扰开关": True,
+                    "每分钟阈值": 2,
+                    "触发动作": "静默并怼人",
+                    "怼人模板": [harass_item("第 {count} 次了！")],
+                    "怼人冷却秒数": 0,
+                },
+            }
+        ),
+    )
+    first = await run_handler(plugin, build_event(components=[Poke(id="99999")], bot=bot))
+    check("第 1 次正常回应", bool(first), str(len(first)))
+    second = await run_handler(plugin, build_event(components=[Poke(id="99999")], bot=bot))
+    check("第 2 次被冷却挡住", second == [], str(len(second)))
+    third = await run_handler(plugin, build_event(components=[Poke(id="99999")], bot=bot))
+    check("第 3 次虽在冷却中仍触发怼人", "第 3 次了" in chain_text(third), chain_text(third))
+    check(
+        "静默并怼人：怼完不回戳",
+        len([c for c in bot.calls if c[0] == "group_poke"]) == 1,
+        str(bot.calls),
+    )
+
+
+async def case_group_limit() -> None:
+    print("\n[19] 群聊防护：每个群各自每分钟上限")
+    plugin = make_plugin(
+        base_config(
+            **{
+                "基础设置": {"用户冷却秒数": 0},
+                "防骚扰": {"防骚扰开关": False, "群聊每分钟上限": 1},
+            }
+        ),
+    )
+    a = await run_handler(
+        plugin,
+        build_event(components=[Poke(id="99999")], sender_id="10001", group_id="111"),
+    )
+    b = await run_handler(
+        plugin,
+        build_event(components=[Poke(id="99999")], sender_id="10002", group_id="111"),
+    )
+    c = await run_handler(
+        plugin,
+        build_event(components=[Poke(id="99999")], sender_id="10003", group_id="222"),
+    )
+    d = await run_handler(
+        plugin,
+        build_event(components=[Poke(id="99999")], sender_id="10004", private=True, group_id=""),
+    )
+    check("同群第 1 次回应", bool(a), str(len(a)))
+    check("同群超过上限静默", b == [], str(len(b)))
+    check("另一个群不受影响", bool(c), str(len(c)))
+    check("私聊不受群上限影响", bool(d), str(len(d)))
+
+
 async def case_llm_fallback() -> None:
     print("\n[11] LLM 不可用 → 回退模板")
     plugin = make_plugin(
@@ -661,6 +746,9 @@ async def main() -> int:
     await case_private()
     await case_harass_silent()
     await case_harass_reply()
+    await case_harass_reply_only()
+    await case_harass_counts_through_cooldown()
+    await case_group_limit()
     await case_llm_fallback()
     await case_llm_success()
     await case_humanoid_asleep()
